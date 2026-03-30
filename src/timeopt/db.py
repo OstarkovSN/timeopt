@@ -5,7 +5,7 @@ from pathlib import Path
 def get_connection(path: str | None = None) -> sqlite3.Connection:
     """Open a SQLite connection. Use ':memory:' for tests."""
     if path is None:
-        path = str(Path.home() / ".timeopt" / "timeopt.db")
+        path = str(Path.home() / ".timeopt" / "tasks.db")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(path)

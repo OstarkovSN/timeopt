@@ -207,6 +207,7 @@ def return_to_pending(
 _DISPLAY_FIELDS = (
     "display_id", "title", "priority", "urgent", "category",
     "effort", "due_at", "status", "due_event_label", "due_unresolved",
+    "done_at", "notes",
 )
 
 
@@ -272,6 +273,8 @@ def list_tasks(
     result = []
     for row in rows:
         d = dict(zip(_DISPLAY_FIELDS, row))
+        if d.get("notes"):
+            d["notes"] = d["notes"][-60:]
         result.append(d)
     return result
 
