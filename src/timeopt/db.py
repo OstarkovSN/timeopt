@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 
-def get_connection(path: str = None) -> sqlite3.Connection:
+def get_connection(path: str | None = None) -> sqlite3.Connection:
     """Open a SQLite connection. Use ':memory:' for tests."""
     if path is None:
         path = str(Path.home() / ".timeopt" / "timeopt.db")
