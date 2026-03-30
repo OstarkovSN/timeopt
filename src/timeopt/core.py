@@ -23,22 +23,30 @@ _CONFIG_DEFAULTS: dict[str, str] = {
     "delegation_max_tool_calls": "10",
 }
 
+# Optional keys — no default, return None if unset
+_CONFIG_OPTIONAL: frozenset[str] = frozenset({
+    "caldav_url", "caldav_username", "caldav_password",
+    "caldav_read_calendars", "caldav_tasks_calendar",
+    "llm_base_url", "llm_api_key", "llm_model",
+})
 
-def get_config(conn: sqlite3.Connection, key: str) -> str:
-    """Return config value. Raises KeyError for unknown keys."""
-    if key not in _CONFIG_DEFAULTS:
+
+def get_config(conn: sqlite3.Connection, key: str) -> str | None:
+    """Return config value. Raises KeyError for unknown keys.
+    Optional keys (caldav_*, llm_*) return None if unset."""
+    if key not in _CONFIG_DEFAULTS and key not in _CONFIG_OPTIONAL:
         raise KeyError("Unknown config key: %s" % key)
     row = conn.execute(
         "SELECT value FROM config WHERE key = ?", (key,)
     ).fetchone()
     if row:
         return row[0]
-    return _CONFIG_DEFAULTS[key]
+    return _CONFIG_DEFAULTS.get(key)  # None for optional keys
 
 
 def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
     """Persist a config value. Raises KeyError for unknown keys."""
-    if key not in _CONFIG_DEFAULTS:
+    if key not in _CONFIG_DEFAULTS and key not in _CONFIG_OPTIONAL:
         raise KeyError("Unknown config key: %s" % key)
     conn.execute(
         "INSERT INTO config(key, value) VALUES(?, ?) "
@@ -49,9 +57,12 @@ def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
     logger.info("config set: %s = %s", key, value)
 
 
-def get_all_config(conn: sqlite3.Connection) -> dict[str, str]:
-    """Return all config values, merging DB overrides with defaults."""
-    cfg = dict(_CONFIG_DEFAULTS)
+def get_all_config(conn: sqlite3.Connection) -> dict[str, str | None]:
+    """Return all config values, merging DB overrides with defaults.
+    Optional keys (caldav_*, llm_*) are included with None if unset."""
+    cfg: dict[str, str | None] = dict(_CONFIG_DEFAULTS)
+    for key in _CONFIG_OPTIONAL:
+        cfg[key] = None
     for row in conn.execute("SELECT key, value FROM config").fetchall():
         cfg[row[0]] = row[1]
     return cfg
