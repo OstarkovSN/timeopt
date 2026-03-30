@@ -1,7 +1,8 @@
 import sqlite3
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum
+from timeopt.core import get_all_config
 
 logger = logging.getLogger(__name__)
 
@@ -91,3 +92,127 @@ def classify_tasks(
     results.sort(key=lambda x: _Q_ORDER[EisenhowerQ(x["quadrant"])])
     logger.info("classify_tasks: classified %d tasks", len(results))
     return results
+
+
+def _parse_time(date_str: str, time_str: str) -> datetime:
+    """Combine a date string (YYYY-MM-DD) and time string (HH:MM) into UTC datetime."""
+    return datetime.fromisoformat(f"{date_str}T{time_str}:00+00:00")
+
+
+def _effort_minutes(effort: str | None, config: dict) -> int:
+    mapping = {
+        "small": int(config["effort_small_min"]),
+        "medium": int(config["effort_medium_min"]),
+        "large": int(config["effort_large_min"]),
+    }
+    return mapping.get(effort or "medium", int(config["effort_medium_min"]))
+
+
+def _compute_free_slots(
+    date: str,
+    events: list[dict],
+    day_start: datetime,
+    day_end: datetime,
+) -> list[tuple[datetime, datetime]]:
+    """Return list of (start, end) free time slots given calendar events."""
+    busy = []
+    for ev in events:
+        s = datetime.fromisoformat(ev["start"].replace("Z", "+00:00"))
+        e = datetime.fromisoformat(ev["end"].replace("Z", "+00:00"))
+        # Ensure offset-aware
+        if s.tzinfo is None:
+            s = s.replace(tzinfo=timezone.utc)
+        if e.tzinfo is None:
+            e = e.replace(tzinfo=timezone.utc)
+        busy.append((s, e))
+    busy.sort(key=lambda x: x[0])
+
+    slots = []
+    cursor = day_start
+    for s, e in busy:
+        if cursor < s:
+            slots.append((cursor, s))
+        cursor = max(cursor, e)
+    if cursor < day_end:
+        slots.append((cursor, day_end))
+    return slots
+
+
+def get_plan_proposal(
+    conn: sqlite3.Connection,
+    events: list[dict],
+    date: str | None = None,
+) -> dict:
+    """
+    Compute a time-blocked schedule for the given date.
+
+    Args:
+        conn: SQLite connection
+        events: List of {start, end, title} calendar events (ISO8601 strings)
+        date: YYYY-MM-DD string, defaults to today UTC
+
+    Returns:
+        {
+            "blocks": [{task_id, display_id, title, start, duration_min, quadrant}],
+            "deferred": [{task_id, display_id, title, quadrant}],
+        }
+    """
+    if date is None:
+        date = datetime.now(timezone.utc).date().isoformat()
+
+    config = get_all_config(conn)
+    day_start = _parse_time(date, config["day_start"])
+    day_end = _parse_time(date, config["day_end"])
+    break_min = int(config["break_duration_min"])
+
+    free_slots = _compute_free_slots(date, events, day_start, day_end)
+    tasks = classify_tasks(conn)  # sorted Q1→Q4, urgency upgraded
+
+    blocks = []
+    deferred = []
+    slot_idx = 0
+    cursor: datetime | None = free_slots[0][0] if free_slots else None
+
+    for task in tasks:
+        duration = _effort_minutes(task.get("effort"), config)
+
+        # Find a slot that fits
+        scheduled = False
+        while slot_idx < len(free_slots):
+            slot_start, slot_end = free_slots[slot_idx]
+            if cursor is None or cursor < slot_start:
+                cursor = slot_start
+
+            available = (slot_end - cursor).seconds // 60
+            # Need space for duration + break (unless last item)
+            needed = duration + break_min
+            if available >= needed:
+                block_start = cursor.isoformat()
+                blocks.append({
+                    "task_id": task["task_id"],
+                    "display_id": task["display_id"],
+                    "title": task["title"],
+                    "start": block_start,
+                    "duration_min": duration,
+                    "quadrant": task["quadrant"],
+                })
+                cursor = cursor + timedelta(minutes=duration + break_min)
+                scheduled = True
+                break
+            else:
+                slot_idx += 1
+                cursor = None
+
+        if not scheduled:
+            deferred.append({
+                "task_id": task["task_id"],
+                "display_id": task["display_id"],
+                "title": task["title"],
+                "quadrant": task["quadrant"],
+            })
+
+    logger.info(
+        "get_plan_proposal: %d blocks, %d deferred for %s",
+        len(blocks), len(deferred), date,
+    )
+    return {"blocks": blocks, "deferred": deferred}
