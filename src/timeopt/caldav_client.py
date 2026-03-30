@@ -1,0 +1,87 @@
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
+
+try:
+    import caldav
+except ImportError:
+    caldav = None  # type: ignore
+
+
+@dataclass
+class CalendarEvent:
+    uid: str
+    title: str
+    start: str  # ISO8601 UTC
+    end: str    # ISO8601 UTC
+
+
+def _to_utc_iso(dt) -> str:
+    """Convert a datetime (possibly naive) to UTC ISO8601 string."""
+    if hasattr(dt, "astimezone"):
+        return dt.astimezone(timezone.utc).isoformat()
+    return str(dt)
+
+
+class CalDAVClient:
+    def __init__(
+        self,
+        url: str,
+        username: str,
+        password: str,
+        read_calendars: str = "all",
+        tasks_calendar: str = "Timeopt",
+    ):
+        self._url = url
+        self._username = username
+        self._password = password
+        self._read_calendars = read_calendars  # "all" or comma-separated names
+        self._tasks_calendar = tasks_calendar
+
+    def _read_calendar_names(self) -> set[str] | None:
+        """Return set of calendar names to read, or None for all."""
+        if self._read_calendars == "all":
+            return None
+        return {n.strip() for n in self._read_calendars.split(",")}
+
+    def get_events(self, date: str, days: int = 1) -> list[CalendarEvent]:
+        """
+        Fetch events for the given date range.
+        Returns [] on connection failure (warn, don't raise).
+        """
+        try:
+            start = datetime.fromisoformat(f"{date}T00:00:00+00:00")
+            end = start + timedelta(days=days)
+            allowed = self._read_calendar_names()
+
+            events: list[CalendarEvent] = []
+            with caldav.DAVClient(
+                url=self._url,
+                username=self._username,
+                password=self._password,
+            ) as client:
+                principal = client.principal()
+                for cal in principal.calendars():
+                    if allowed is not None and cal.name not in allowed:
+                        continue
+                    if cal.name == self._tasks_calendar:
+                        continue  # never read our own write calendar
+                    try:
+                        for ev in cal.date_search(start=start, end=end):
+                            vevent = ev.instance.vevent
+                            events.append(CalendarEvent(
+                                uid=vevent.uid.value,
+                                title=vevent.summary.value,
+                                start=_to_utc_iso(vevent.dtstart.value),
+                                end=_to_utc_iso(vevent.dtend.value),
+                            ))
+                    except Exception:
+                        logger.exception("error fetching events from calendar %s", cal.name)
+
+            logger.info("get_events: %d events for %s", len(events), date)
+            return events
+        except Exception:
+            logger.warning("CalDAV unreachable — returning empty event list")
+            return []
