@@ -111,3 +111,82 @@ def create_task(conn: sqlite3.Connection, task: TaskInput) -> str:
     conn.commit()
     logger.info("task created: %s %s", display_id, task.title)
     return display_id
+
+
+def _append_note(conn: sqlite3.Connection, task_id: str, text: str) -> None:
+    """Append a timestamped entry to task notes."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry = f"[{now}] {text}"
+    existing = conn.execute(
+        "SELECT notes FROM tasks WHERE id=?", (task_id,)
+    ).fetchone()[0]
+    new_notes = f"{existing}\n{entry}" if existing else entry
+    conn.execute("UPDATE tasks SET notes=? WHERE id=?", (new_notes, task_id))
+    conn.commit()
+
+
+def mark_done(conn: sqlite3.Connection, task_ids: list[str]) -> None:
+    """
+    Mark tasks as done. task_ids may be UUIDs or display_ids.
+    Only acts on pending/delegated tasks — raises ValueError otherwise.
+    """
+    for task_id in task_ids:
+        row = conn.execute(
+            "SELECT id, status FROM tasks WHERE id=? OR display_id=?",
+            (task_id, task_id),
+        ).fetchone()
+        if not row:
+            raise ValueError("Task not found: %s" % task_id)
+        if row["status"] not in ("pending", "delegated"):
+            raise ValueError("Task %s is not active (status=%s)" % (task_id, row["status"]))
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE tasks SET status='done', done_at=? WHERE id=?",
+            (now, row["id"]),
+        )
+        conn.commit()
+        logger.info("task done: %s", row["id"])
+
+
+def mark_delegated(
+    conn: sqlite3.Connection, task_id: str, notes: str | None = None
+) -> None:
+    """Set task status to delegated. task_id is UUID or display_id."""
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE (id=? OR display_id=?) AND status='pending'",
+        (task_id, task_id),
+    ).fetchone()
+    if not row:
+        raise ValueError("Pending task not found: %s" % task_id)
+    conn.execute("UPDATE tasks SET status='delegated' WHERE id=?", (row["id"],))
+    conn.commit()
+    if notes:
+        _append_note(conn, row["id"], notes)
+    logger.info("task delegated: %s", row["id"])
+
+
+def update_task_notes(
+    conn: sqlite3.Connection, task_id: str, notes: str
+) -> None:
+    """Append progress note to a delegated task. Raises if not delegated."""
+    row = conn.execute(
+        "SELECT id, status FROM tasks WHERE id=?", (task_id,)
+    ).fetchone()
+    if not row or row["status"] != "delegated":
+        raise ValueError("Task %s is not delegated" % task_id)
+    _append_note(conn, task_id, notes)
+
+
+def return_to_pending(
+    conn: sqlite3.Connection, task_id: str, notes: str
+) -> None:
+    """Return a delegated task to pending with a failure note."""
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE id=? AND status='delegated'", (task_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError("Delegated task not found: %s" % task_id)
+    _append_note(conn, task_id, notes)
+    conn.execute("UPDATE tasks SET status='pending' WHERE id=?", (task_id,))
+    conn.commit()
+    logger.info("task returned to pending: %s", task_id)

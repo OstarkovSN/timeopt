@@ -93,3 +93,69 @@ def test_create_task_recycles_id_after_done(conn):
                    priority="low", urgent=False, category="other", effort="small")
     id2 = create_task(conn, t2)
     assert id2 == "#1-task-two"  # recycled #1
+
+
+from timeopt.core import mark_done, mark_delegated, update_task_notes, return_to_pending
+
+
+def _make_task(conn, title="fix bug", priority="high", urgent=False,
+               category="work", effort="medium") -> str:
+    task = TaskInput(title=title, raw=title, priority=priority,
+                     urgent=urgent, category=category, effort=effort)
+    return create_task(conn, task)
+
+
+def test_mark_done_sets_status(conn):
+    display_id = _make_task(conn)
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_done(conn, [row["id"]])
+    row = conn.execute("SELECT status, done_at FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    assert row["status"] == "done"
+    assert row["done_at"] is not None
+
+
+def test_mark_done_rejects_already_done(conn):
+    import pytest
+    display_id = _make_task(conn)
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_done(conn, [row["id"]])
+    with pytest.raises(ValueError, match="not active"):
+        mark_done(conn, [row["id"]])
+
+
+def test_mark_delegated_sets_status(conn):
+    display_id = _make_task(conn)
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_delegated(conn, row["id"], notes="starting delegation")
+    row = conn.execute("SELECT status, notes FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    assert row["status"] == "delegated"
+    assert "starting delegation" in row["notes"]
+
+
+def test_update_task_notes_appends(conn):
+    display_id = _make_task(conn)
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_delegated(conn, row["id"])
+    update_task_notes(conn, row["id"], "first note")
+    update_task_notes(conn, row["id"], "second note")
+    notes = conn.execute("SELECT notes FROM tasks WHERE id=?", (row["id"],)).fetchone()[0]
+    assert "first note" in notes
+    assert "second note" in notes
+
+
+def test_update_task_notes_rejects_non_delegated(conn):
+    import pytest
+    display_id = _make_task(conn)
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    with pytest.raises(ValueError, match="not delegated"):
+        update_task_notes(conn, row["id"], "note")
+
+
+def test_return_to_pending(conn):
+    display_id = _make_task(conn)
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_delegated(conn, row["id"])
+    return_to_pending(conn, row["id"], "no tools available")
+    row = conn.execute("SELECT status, notes FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    assert row["status"] == "pending"
+    assert "no tools available" in row["notes"]
