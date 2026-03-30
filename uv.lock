@@ -1826,6 +1826,7 @@ dependencies = [
     { name = "caldav" },
     { name = "click" },
     { name = "fastmcp" },
+    { name = "icalendar" },
     { name = "openai" },
     { name = "rapidfuzz" },
 ]
@@ -1841,6 +1842,7 @@ requires-dist = [
     { name = "caldav", specifier = ">=1.3" },
     { name = "click", specifier = ">=8.1" },
     { name = "fastmcp", specifier = ">=2.0" },
+    { name = "icalendar", specifier = ">=7.0.3" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0" },
     { name = "rapidfuzz", specifier = ">=3.0" },
