@@ -418,3 +418,28 @@ def get_dump_templates(
         templates.append(tmpl)
 
     return {"schema": _TEMPLATE_SCHEMA, "templates": templates}
+
+
+def dump_task(conn: sqlite3.Connection, task: TaskInput) -> str:
+    """
+    Save a single task from a filled template.
+    Auto-runs Eisenhower classification after insert.
+    Returns display_id.
+    """
+    display_id = create_task(conn, task)
+    # Auto-classify: upgrade urgency if overdue
+    _auto_classify(conn)
+    logger.info("dump_task: saved %s", display_id)
+    return display_id
+
+
+def dump_tasks(conn: sqlite3.Connection, tasks: list[TaskInput]) -> list[str]:
+    """
+    Save a batch of tasks from filled templates.
+    Auto-runs Eisenhower classification once after all inserts.
+    Returns list of display_ids.
+    """
+    display_ids = [create_task(conn, task) for task in tasks]
+    _auto_classify(conn)
+    logger.info("dump_tasks: saved %d tasks", len(display_ids))
+    return display_ids

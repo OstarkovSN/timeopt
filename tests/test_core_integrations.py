@@ -70,3 +70,61 @@ def test_resolve_calendar_reference_picks_highest_score():
     match = resolve_calendar_reference("standup", MOCK_EVENTS)
     assert match is not None
     assert "standup" in match["title"].lower()
+
+
+from timeopt.core import dump_task, dump_tasks, TaskInput
+
+
+def test_dump_task_saves_and_returns_display_id(conn):
+    task = TaskInput(
+        title="fix login bug", raw="fix login bug",
+        priority="high", urgent=False, category="work", effort="medium"
+    )
+    display_id = dump_task(conn, task)
+    assert display_id.startswith("#1-")
+    row = conn.execute("SELECT * FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    assert row is not None
+
+
+def test_dump_task_auto_classifies(conn):
+    from datetime import datetime, timezone, timedelta
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    task = TaskInput(
+        title="overdue task", raw="overdue",
+        priority="medium", urgent=False,
+        category="work", effort="small", due_at=past
+    )
+    dump_task(conn, task)
+    row = conn.execute("SELECT urgent FROM tasks WHERE title='overdue task'").fetchone()
+    assert row[0] == 1  # urgency auto-upgraded
+
+
+def test_dump_task_binds_calendar_event(conn):
+    task = TaskInput(
+        title="prep report", raw="prep report before meeting with Jeff",
+        priority="high", urgent=False, category="work", effort="large",
+        due_event_label="meeting with Jeff",
+        due_event_uid="uid-1",
+        due_event_offset_min=-30,
+        due_at="2026-03-28T13:30:00+00:00",
+    )
+    display_id = dump_task(conn, task)
+    row = conn.execute(
+        "SELECT due_event_uid, due_unresolved FROM tasks WHERE display_id=?",
+        (display_id,)
+    ).fetchone()
+    assert row["due_event_uid"] == "uid-1"
+    assert row["due_unresolved"] == 0
+
+
+def test_dump_tasks_saves_batch(conn):
+    tasks = [
+        TaskInput(title="task a", raw="a", priority="high", urgent=False,
+                  category="work", effort="small"),
+        TaskInput(title="task b", raw="b", priority="low", urgent=False,
+                  category="personal", effort="small"),
+    ]
+    display_ids = dump_tasks(conn, tasks)
+    assert len(display_ids) == 2
+    count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    assert count == 2
