@@ -3,7 +3,7 @@ import logging
 import re
 import uuid
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -190,3 +190,75 @@ def return_to_pending(
     conn.execute("UPDATE tasks SET status='pending' WHERE id=?", (task_id,))
     conn.commit()
     logger.info("task returned to pending: %s", task_id)
+
+
+_DISPLAY_FIELDS = (
+    "display_id", "title", "priority", "urgent", "category",
+    "effort", "due_at", "status", "due_event_label", "due_unresolved",
+)
+
+
+def _auto_classify(conn: sqlite3.Connection) -> None:
+    """Upgrade urgency for tasks with due_at today or overdue. Called automatically."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    conn.execute(
+        "UPDATE tasks SET urgent=1 "
+        "WHERE status IN ('pending','delegated') "
+        "AND due_at IS NOT NULL AND due_at <= ? AND urgent=0",
+        (today + "T23:59:59",),
+    )
+    conn.commit()
+
+
+def list_tasks(
+    conn: sqlite3.Connection,
+    status: str | None = None,
+    priority: str | None = None,
+    category: str | None = None,
+    include_old_done: bool = False,
+) -> list[dict]:
+    """
+    Return tasks as dicts with display fields only.
+    Defaults to pending + delegated. Auto-upgrades urgency before returning.
+    """
+    _auto_classify(conn)
+
+    hide_days = int(get_config(conn, "hide_done_after_days"))
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=hide_days)
+    ).isoformat()
+
+    clauses = []
+    params: list[Any] = []
+
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    else:
+        if include_old_done:
+            pass  # no filter
+        else:
+            clauses.append(
+                "(status IN ('pending','delegated') OR "
+                "(status='done' AND done_at >= ?))"
+            )
+            params.append(cutoff)
+
+    if priority:
+        clauses.append("priority = ?")
+        params.append(priority)
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    fields = ", ".join(_DISPLAY_FIELDS)
+    rows = conn.execute(
+        f"SELECT {fields} FROM tasks {where} ORDER BY rowid", params
+    ).fetchall()
+
+    result = []
+    for row in rows:
+        d = dict(zip(_DISPLAY_FIELDS, row))
+        result.append(d)
+    return result

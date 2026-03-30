@@ -1,4 +1,5 @@
 from timeopt.core import get_config, set_config, get_all_config
+from datetime import datetime, timezone, timedelta
 
 DEFAULTS = {
     "day_start": "09:00",
@@ -159,3 +160,56 @@ def test_return_to_pending(conn):
     row = conn.execute("SELECT status, notes FROM tasks WHERE display_id=?", (display_id,)).fetchone()
     assert row["status"] == "pending"
     assert "no tools available" in row["notes"]
+
+
+from timeopt.core import list_tasks
+
+
+def test_list_tasks_returns_pending_by_default(conn):
+    _make_task(conn, title="task a")
+    _make_task(conn, title="task b")
+    tasks = list_tasks(conn)
+    assert len(tasks) == 2
+    assert all(t["status"] == "pending" for t in tasks)
+
+
+def test_list_tasks_excludes_old_done(conn):
+    display_id = _make_task(conn, title="old task")
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    # Set done_at to 10 days ago
+    old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    conn.execute("UPDATE tasks SET status='done', done_at=? WHERE id=?", (old, row["id"]))
+    conn.commit()
+    tasks = list_tasks(conn)
+    assert len(tasks) == 0
+
+
+def test_list_tasks_includes_recent_done(conn):
+    display_id = _make_task(conn, title="recent done")
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("UPDATE tasks SET status='done', done_at=? WHERE id=?", (now, row["id"]))
+    conn.commit()
+    tasks = list_tasks(conn, include_old_done=True)
+    assert any(t["display_id"] == display_id for t in tasks)
+
+
+def test_list_tasks_returns_display_fields_only(conn):
+    _make_task(conn)
+    tasks = list_tasks(conn)
+    assert len(tasks) == 1
+    t = tasks[0]
+    assert "display_id" in t
+    assert "title" in t
+    assert "priority" in t
+    # raw and created_at should NOT be in default response
+    assert "raw" not in t
+    assert "created_at" not in t
+
+
+def test_list_tasks_includes_delegated(conn):
+    display_id = _make_task(conn, title="delegate me")
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_delegated(conn, row["id"])
+    tasks = list_tasks(conn)
+    assert any(t["display_id"] == display_id for t in tasks)
