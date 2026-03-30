@@ -60,3 +60,22 @@ def create_schema(conn: sqlite3.Connection) -> None:
         );
     """)
     conn.commit()
+
+
+def next_short_id(conn: sqlite3.Connection) -> int:
+    """
+    Find the lowest free short_id.
+    Tries 1–99 first (recycling pool). Falls back to MAX+1 if all taken.
+    'Free' means not held by any pending or delegated task.
+    """
+    occupied = {
+        row[0]
+        for row in conn.execute(
+            "SELECT short_id FROM tasks WHERE status IN ('pending', 'delegated')"
+        ).fetchall()
+    }
+    for i in range(1, 100):
+        if i not in occupied:
+            return i
+    max_id = conn.execute("SELECT MAX(short_id) FROM tasks").fetchone()[0] or 0
+    return max(max_id + 1, 100)
