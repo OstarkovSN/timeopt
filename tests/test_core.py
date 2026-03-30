@@ -40,3 +40,56 @@ def test_get_all_config_returns_merged(conn):
 def test_set_config_persists(conn):
     set_config(conn, "default_effort", "large")
     assert get_config(conn, "default_effort") == "large"
+
+
+from timeopt.core import create_task, TaskInput
+
+
+def test_create_task_returns_display_id(conn):
+    task = TaskInput(title="fix login bug", raw="fix login bug",
+                     priority="high", urgent=False, category="work", effort="medium")
+    display_id = create_task(conn, task)
+    assert display_id == "#1-fix-login-bug"
+
+
+def test_create_task_stores_in_db(conn):
+    task = TaskInput(title="call dentist", raw="call dentist",
+                     priority="medium", urgent=False, category="personal", effort="small")
+    display_id = create_task(conn, task)
+    row = conn.execute(
+        "SELECT * FROM tasks WHERE display_id = ?", (display_id,)
+    ).fetchone()
+    assert row is not None
+    assert row["title"] == "call dentist"
+    assert row["status"] == "pending"
+
+
+def test_create_task_slug_strips_special_chars(conn):
+    task = TaskInput(title="Fix login bug!", raw="Fix login bug!",
+                     priority="high", urgent=False, category="work", effort="medium")
+    display_id = create_task(conn, task)
+    assert display_id == "#1-fix-login-bug"
+
+
+def test_create_two_tasks_get_sequential_ids(conn):
+    t1 = TaskInput(title="task one", raw="task one",
+                   priority="low", urgent=False, category="other", effort="small")
+    t2 = TaskInput(title="task two", raw="task two",
+                   priority="low", urgent=False, category="other", effort="small")
+    id1 = create_task(conn, t1)
+    id2 = create_task(conn, t2)
+    assert id1 == "#1-task-one"
+    assert id2 == "#2-task-two"
+
+
+def test_create_task_recycles_id_after_done(conn):
+    t1 = TaskInput(title="task one", raw="task one",
+                   priority="low", urgent=False, category="other", effort="small")
+    display_id = create_task(conn, t1)
+    conn.execute("UPDATE tasks SET status='done' WHERE display_id=?", (display_id,))
+    conn.commit()
+
+    t2 = TaskInput(title="task two", raw="task two",
+                   priority="low", urgent=False, category="other", effort="small")
+    id2 = create_task(conn, t2)
+    assert id2 == "#1-task-two"  # recycled #1
