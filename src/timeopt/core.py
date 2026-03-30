@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
+from rapidfuzz import process as fuzz_process
 
 logger = logging.getLogger(__name__)
 
@@ -262,3 +263,42 @@ def list_tasks(
         d = dict(zip(_DISPLAY_FIELDS, row))
         result.append(d)
     return result
+
+
+def get_task(conn: sqlite3.Connection, task_id: str) -> dict:
+    """Return full task dict by UUID. Raises ValueError if not found."""
+    row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    if not row:
+        raise ValueError("Task not found: %s" % task_id)
+    return dict(row)
+
+
+def fuzzy_match_tasks(
+    conn: sqlite3.Connection, query: str, limit: int = 5
+) -> list[dict]:
+    """
+    Fuzzy-match query against active task titles.
+    Returns list of {task_id, display_id, title, score} sorted by score desc.
+    Only searches pending and delegated tasks.
+    """
+    rows = conn.execute(
+        "SELECT id, display_id, title FROM tasks "
+        "WHERE status IN ('pending', 'delegated')"
+    ).fetchall()
+
+    if not rows:
+        return []
+
+    titles = [row["title"] for row in rows]
+    results = fuzz_process.extract(query, titles, limit=limit)
+
+    matches = []
+    for title, score, idx in results:
+        row = rows[idx]
+        matches.append({
+            "task_id": row["id"],
+            "display_id": row["display_id"],
+            "title": row["title"],
+            "score": score,
+        })
+    return sorted(matches, key=lambda x: x["score"], reverse=True)

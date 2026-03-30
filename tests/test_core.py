@@ -213,3 +213,46 @@ def test_list_tasks_includes_delegated(conn):
     mark_delegated(conn, row["id"])
     tasks = list_tasks(conn)
     assert any(t["display_id"] == display_id for t in tasks)
+
+
+from timeopt.core import get_task, fuzzy_match_tasks
+
+
+def test_get_task_returns_full_row(conn):
+    display_id = _make_task(conn, title="full detail task")
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    task = get_task(conn, row["id"])
+    assert "raw" in task
+    assert "created_at" in task
+    assert task["title"] == "full detail task"
+
+
+def test_get_task_not_found_raises(conn):
+    import pytest
+    with pytest.raises(ValueError, match="not found"):
+        get_task(conn, "nonexistent-id")
+
+
+def test_fuzzy_match_finds_clear_winner(conn):
+    _make_task(conn, title="fix login bug")
+    _make_task(conn, title="call dentist")
+    matches = fuzzy_match_tasks(conn, "fix login")
+    assert len(matches) > 0
+    assert matches[0]["title"] == "fix login bug"
+    assert matches[0]["score"] >= 80
+
+
+def test_fuzzy_match_only_searches_active(conn):
+    display_id = _make_task(conn, title="done task")
+    row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    mark_done(conn, [row["id"]])
+    matches = fuzzy_match_tasks(conn, "done task")
+    assert len(matches) == 0
+
+
+def test_fuzzy_match_returns_sorted_by_score(conn):
+    _make_task(conn, title="fix login bug")
+    _make_task(conn, title="fix login redirect")
+    matches = fuzzy_match_tasks(conn, "fix login")
+    assert len(matches) >= 2
+    assert matches[0]["score"] >= matches[1]["score"]
