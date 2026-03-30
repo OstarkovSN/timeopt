@@ -112,3 +112,34 @@ def _parse_dt(iso: str):
 def _parse_end(block: dict):
     start = _parse_dt(block["start"])
     return start + timedelta(minutes=block["duration_min"])
+
+
+from timeopt.planner import save_calendar_blocks, delete_calendar_blocks_for_date, get_calendar_blocks
+
+
+def test_save_calendar_blocks(conn):
+    _seed_tasks(conn)
+    proposal = get_plan_proposal(conn, events=[], date="2026-03-28")
+    save_calendar_blocks(conn, proposal["blocks"], "2026-03-28",
+                         caldav_uids=["uid-1", "uid-2", "uid-3", "uid-4"])
+    blocks = get_calendar_blocks(conn, "2026-03-28")
+    assert len(blocks) == len(proposal["blocks"])
+
+
+def test_delete_calendar_blocks_for_date(conn):
+    _seed_tasks(conn)
+    proposal = get_plan_proposal(conn, events=[], date="2026-03-28")
+    uids = [f"uid-{i}" for i in range(len(proposal["blocks"]))]
+    save_calendar_blocks(conn, proposal["blocks"], "2026-03-28", caldav_uids=uids)
+    delete_calendar_blocks_for_date(conn, "2026-03-28")
+    assert get_calendar_blocks(conn, "2026-03-28") == []
+
+
+def test_save_returns_stored_uids(conn):
+    _seed_tasks(conn)
+    proposal = get_plan_proposal(conn, events=[], date="2026-03-28")
+    uids = [f"uid-{i}" for i in range(len(proposal["blocks"]))]
+    save_calendar_blocks(conn, proposal["blocks"], "2026-03-28", caldav_uids=uids)
+    blocks = get_calendar_blocks(conn, "2026-03-28")
+    stored_uids = {b["caldav_uid"] for b in blocks}
+    assert stored_uids == set(uids)

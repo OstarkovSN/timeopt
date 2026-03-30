@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from timeopt.core import get_all_config
@@ -216,3 +217,60 @@ def get_plan_proposal(
         len(blocks), len(deferred), date,
     )
     return {"blocks": blocks, "deferred": deferred}
+
+
+def save_calendar_blocks(
+    conn: sqlite3.Connection,
+    blocks: list[dict],
+    plan_date: str,
+    caldav_uids: list[str],
+) -> None:
+    """
+    Persist calendar blocks after successful CalDAV push.
+    caldav_uids must be the same length and order as blocks.
+    """
+    assert len(blocks) == len(caldav_uids), "blocks and caldav_uids must match"
+    for block, uid in zip(blocks, caldav_uids):
+        conn.execute(
+            "INSERT INTO calendar_blocks(id, task_id, caldav_uid, scheduled_at, duration_min, plan_date) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                str(_uuid.uuid4()),
+                block["task_id"],
+                uid,
+                block["start"],
+                block["duration_min"],
+                plan_date,
+            ),
+        )
+    conn.commit()
+    logger.info("saved %d calendar blocks for %s", len(blocks), plan_date)
+
+
+def delete_calendar_blocks_for_date(
+    conn: sqlite3.Connection, plan_date: str
+) -> list[str]:
+    """
+    Delete all calendar_blocks rows for a date.
+    Returns list of caldav_uids that must be deleted from CalDAV by the caller.
+    """
+    rows = conn.execute(
+        "SELECT caldav_uid FROM calendar_blocks WHERE plan_date=?", (plan_date,)
+    ).fetchall()
+    uids = [row[0] for row in rows]
+    conn.execute("DELETE FROM calendar_blocks WHERE plan_date=?", (plan_date,))
+    conn.commit()
+    logger.info("deleted %d calendar blocks for %s", len(uids), plan_date)
+    return uids
+
+
+def get_calendar_blocks(
+    conn: sqlite3.Connection, plan_date: str
+) -> list[dict]:
+    """Return all calendar blocks for a date."""
+    rows = conn.execute(
+        "SELECT id, task_id, caldav_uid, scheduled_at, duration_min, plan_date "
+        "FROM calendar_blocks WHERE plan_date=?",
+        (plan_date,),
+    ).fetchall()
+    return [dict(row) for row in rows]
