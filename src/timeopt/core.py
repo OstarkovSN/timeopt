@@ -316,3 +316,105 @@ def fuzzy_match_tasks(
             "score": score,
         })
     return sorted(matches, key=lambda x: x["score"], reverse=True)
+
+
+# Patterns suggesting an explicit time reference (not a calendar event)
+_TIME_PATTERNS = [
+    r"\b(before|by|at|until)\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b",
+    r"\b(noon|midnight|morning|evening|tonight)\b",
+    r"\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+    r"\b(today|tomorrow|this week|next week)\b",
+    r"\bfor\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+]
+_TIME_RE = re.compile("|".join(_TIME_PATTERNS), re.IGNORECASE)
+
+# Patterns suggesting a calendar event reference
+_EVENT_PATTERNS = [
+    r"\b(before|after|during|ahead of|prior to)\s+(?:the\s+)?(?:meeting|call|standup|review|sync|session|presentation|interview|lunch|dinner)\b",
+    r"\bbefore\s+(?:my\s+)?(?:meeting|call)\s+with\b",
+]
+_EVENT_RE = re.compile("|".join(_EVENT_PATTERNS), re.IGNORECASE)
+
+_TEMPLATE_SCHEMA = {
+    "priority": "high|medium|low",
+    "urgent": "bool",
+    "category": "work|personal|errands|other",
+    "effort": "small|medium|large",
+    "due_at": "ISO8601 UTC or omit",
+    "due_event_label": "string or omit",
+    "due_event_offset_min": "int (negative = before event) or omit",
+}
+
+
+def _extract_event_label(fragment: str) -> str | None:
+    """Try to extract the event name from a textual calendar reference."""
+    patterns = [
+        r"\bbefore\s+(?:my\s+)?((?:meeting|call)\s+with\s+.+?)(?:\s*$)",
+        r"\b(?:before|after|during|ahead of|prior to)\s+(?:the\s+)?(.+?)(?:\s*$)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, fragment, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def resolve_calendar_reference(
+    label: str,
+    events: list,
+) -> dict | None:
+    """
+    Fuzzy-match a textual event label against a list of CalendarEvent objects.
+    Returns the best match as {uid, title, start, end, score} or None.
+    """
+    if not events:
+        return None
+    titles = [ev.title for ev in events]
+    results = fuzz_process.extractOne(label, titles)
+    if results is None:
+        return None
+    title, score, idx = results
+    if score < 50:
+        return None
+    ev = events[idx]
+    return {"uid": ev.uid, "title": ev.title, "start": ev.start, "end": ev.end, "score": score}
+
+
+def get_dump_templates(
+    fragments: list[str],
+    events: list,
+) -> dict:
+    """
+    Build sparse JSON templates for brain-dump fragments.
+    Schema appears once at top level. Only non-null fields included per template.
+    events: list of CalendarEvent objects for reference resolution.
+    """
+    templates = []
+    for fragment in fragments:
+        tmpl: dict = {
+            "raw": fragment,
+            "title": fragment.strip(),
+            "priority": "?",
+            "urgent": "?",
+            "category": "?",
+            "effort": "?",
+        }
+
+        # Detect explicit time reference
+        if _TIME_RE.search(fragment):
+            tmpl["due_at"] = "?"
+
+        # Detect calendar event reference
+        if _EVENT_RE.search(fragment):
+            label = _extract_event_label(fragment)
+            if label:
+                tmpl["due_event_label"] = label
+                tmpl["due_event_offset_min"] = "?"
+                # Try to resolve now
+                match = resolve_calendar_reference(label, events)
+                if match:
+                    tmpl["_resolved_event_uid"] = match["uid"]
+
+        templates.append(tmpl)
+
+    return {"schema": _TEMPLATE_SCHEMA, "templates": templates}
