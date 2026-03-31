@@ -274,3 +274,59 @@ def get_calendar_blocks(
         (plan_date,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _get_uids_for_date(conn: sqlite3.Connection, date: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT caldav_uid FROM calendar_blocks WHERE plan_date=?", (date,)
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def push_calendar_blocks(
+    conn: sqlite3.Connection,
+    proposal: dict,
+    date: str,
+    caldav_client,
+) -> None:
+    """
+    Transactional push: all CalDAV writes collected first,
+    SQLite committed only on full success.
+    If CalDAV fails, raises and leaves DB unchanged.
+    """
+    blocks = proposal["blocks"]
+    if not blocks:
+        logger.info("push_calendar_blocks: no blocks to push for %s", date)
+        return
+
+    # Step 1: collect old UIDs that need deletion (from DB, before changes)
+    old_uids = _get_uids_for_date(conn, date)
+
+    # Step 2: attempt ALL CalDAV creates first (may raise — leaves DB untouched)
+    new_uids = []
+    for block in blocks:
+        end_dt = (
+            datetime.fromisoformat(block["start"]) +
+            timedelta(minutes=block["duration_min"])
+        ).isoformat()
+        uid = caldav_client.create_event(
+            title=block["title"],
+            start=block["start"],
+            end=end_dt,
+        )
+        new_uids.append(uid)
+
+    # Step 3: all creates succeeded — delete old CalDAV events
+    for uid in old_uids:
+        caldav_client.delete_event(uid)
+
+    # Step 4: commit SQLite atomically
+    conn.execute("DELETE FROM calendar_blocks WHERE plan_date=?", (date,))
+    for block, uid in zip(blocks, new_uids):
+        conn.execute(
+            "INSERT INTO calendar_blocks(id, task_id, caldav_uid, scheduled_at, duration_min, plan_date) "
+            "VALUES (?,?,?,?,?,?)",
+            (str(_uuid.uuid4()), block["task_id"], uid, block["start"], block["duration_min"], date),
+        )
+    conn.commit()
+    logger.info("push_calendar_blocks: pushed %d blocks for %s", len(blocks), date)
