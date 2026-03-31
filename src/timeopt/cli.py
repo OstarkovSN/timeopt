@@ -186,3 +186,191 @@ def config_set(key, value):
         click.echo(f"Set {key} = {value}")
     finally:
         conn.close()
+
+
+@cli.command()
+@click.argument("queries", nargs=-1, required=True)
+def done(queries):
+    """Mark tasks as done by fuzzy match. Accepts partial names."""
+    conn = _open_conn()
+    try:
+        min_score = int(core.get_config(conn, "fuzzy_match_min_score") or 80)
+        ask_gap = int(core.get_config(conn, "fuzzy_match_ask_gap") or 10)
+
+        task_ids = []
+        confirmed_dids = []
+
+        for query in queries:
+            candidates = core.fuzzy_match_tasks(conn, query)
+
+            if not candidates or candidates[0]["score"] < min_score:
+                click.echo(f"No confident match for '{query}'.")
+                if candidates:
+                    click.echo("  Closest:")
+                    for c in candidates[:3]:
+                        click.echo(f"    {c['display_id']} (score: {c['score']:.0f})")
+                continue
+
+            top = candidates[0]
+            second_score = candidates[1]["score"] if len(candidates) > 1 else 0
+
+            if len(candidates) >= 2 and (top["score"] - second_score) < ask_gap:
+                click.echo(f"Ambiguous match for '{query}':")
+                for i, c in enumerate(candidates[:3], 1):
+                    click.echo(f"  {i}. {c['display_id']} — {c['title']} (score: {c['score']:.0f})")
+                choice = click.prompt("Pick number (0 to skip)", type=int, default=0)
+                if choice == 0:
+                    continue
+                if 1 <= choice <= min(3, len(candidates)):
+                    task_ids.append(candidates[choice - 1]["task_id"])
+                    confirmed_dids.append(candidates[choice - 1]["display_id"])
+            else:
+                task_ids.append(top["task_id"])
+                confirmed_dids.append(top["display_id"])
+
+        if task_ids:
+            core.mark_done(conn, task_ids)
+            click.echo("Done:")
+            for did in confirmed_dids:
+                click.echo(f"  ✓ {did}")
+    finally:
+        conn.close()
+
+
+@cli.command()
+@click.argument("text")
+def dump(text):
+    """Brain-dump tasks in free-form text. Parses with LLM and saves."""
+    conn = _open_conn()
+    try:
+        llm = _get_llm_client(conn)
+        result = core.cli_dump(conn, llm, text)
+        click.echo(f"Added {result['count']} task(s):")
+        for did in result["display_ids"]:
+            click.echo(f"  {did}")
+    finally:
+        conn.close()
+
+
+@cli.command()
+@click.option("--date", "plan_date", default=None,
+              help="Date to plan for (YYYY-MM-DD, default today)")
+def plan(plan_date):
+    """Generate and push a daily task schedule."""
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav_client(conn)
+        if not caldav:
+            click.echo("Warning: CalDAV not configured — planning without calendar data.", err=True)
+
+        target = plan_date or _date_type.today().isoformat()
+        events = []
+        if caldav:
+            try:
+                raw_events = caldav.get_events(target, days=1)
+                events = [{"start": e.start, "end": e.end, "title": e.title} for e in raw_events]
+            except Exception:
+                logger.exception("plan: CalDAV unavailable, proceeding without calendar")
+
+        proposal = planner.get_plan_proposal(conn, events, target)
+        blocks = proposal.get("blocks", [])
+
+        if not blocks:
+            click.echo("No tasks to schedule.")
+            return
+
+        click.echo("Proposed schedule:")
+        from datetime import datetime as _dt, timedelta as _td
+        for b in blocks:
+            start_str = b.get("start", "")
+            if len(start_str) >= 16:
+                start_dt = _dt.fromisoformat(start_str)
+                end_dt = start_dt + _td(minutes=b.get("duration_min", 0))
+                click.echo(
+                    f"  {start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')}"
+                    f"  {b.get('display_id', ''):<35} [{b.get('quadrant', '')}]"
+                )
+
+        deferred = proposal.get("deferred", [])
+        if deferred:
+            click.echo(f"\nDeferred ({len(deferred)}):")
+            for d in deferred:
+                click.echo(f"  {d.get('display_id', '')} — {d.get('title', '')}")
+
+        if not caldav:
+            click.echo("\nCalDAV not configured — skipping calendar push.")
+            return
+
+        if not click.confirm("\nPush to calendar?", default=True):
+            return
+
+        planner.push_calendar_blocks(conn, proposal, target, caldav)
+        click.echo(f"Pushed {len(blocks)} block(s) to calendar.")
+    finally:
+        conn.close()
+
+
+@cli.command("check-urgent")
+def check_urgent():
+    """Classify tasks and show Q3 (urgent, not important) tasks for delegation."""
+    conn = _open_conn()
+    try:
+        result = planner.classify_tasks(conn)
+        q3_tasks = [t for t in result if t.get("quadrant") == "Q3"]
+
+        if not q3_tasks:
+            click.echo("No Q3 tasks. All clear.")
+            return
+
+        click.echo(f"Q3 tasks (urgent + not important) — {len(q3_tasks)} found:")
+        for t in q3_tasks:
+            click.echo(f"  {t.get('display_id', ''):<35} {t.get('title', '')}")
+        click.echo("\nTip: Run '/check-urgent' in Claude Code to automatically delegate these.")
+    finally:
+        conn.close()
+
+
+@cli.command()
+def sync():
+    """Sync due dates for tasks bound to calendar events."""
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav_client(conn)
+        if not caldav:
+            click.echo("CalDAV not configured. Set caldav_username and caldav_password.")
+            return
+
+        try:
+            events_raw = caldav.get_events(_date_type.today().isoformat(), days=90)
+            events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
+        except Exception as e:
+            click.echo(f"CalDAV error: {e}", err=True)
+            return
+
+        changes = core.sync_bound_tasks(conn, events)
+        resolved = core.try_resolve_unresolved(conn, events)
+        still_unresolved = core.get_unresolved_tasks(conn)
+
+        if changes:
+            click.echo(f"Updated {len(changes)} task due date(s):")
+            for c in changes:
+                if c["status"] == "updated":
+                    old = (c["old_due_at"] or "")[:10]
+                    new = (c["new_due_at"] or "")[:10]
+                    click.echo(f"  {c['display_id']}  {old} → {new}")
+                elif c["status"] == "event_missing":
+                    click.echo(f"  {c['display_id']}  ⚠ bound event deleted — due date preserved")
+        else:
+            click.echo("No due date changes.")
+
+        newly_resolved = [r for r in resolved if r["status"] == "resolved"]
+        if newly_resolved:
+            click.echo(f"\nResolved {len(newly_resolved)} previously unresolved task(s).")
+
+        if still_unresolved:
+            click.echo(f"\n{len(still_unresolved)} task(s) still have unresolved calendar references:")
+            for t in still_unresolved:
+                click.echo(f"  {t['display_id']}  ref: {t.get('due_event_label', '?')}")
+            click.echo("Run '/sync' in Claude Code to resolve these interactively.")
+    finally:
+        conn.close()

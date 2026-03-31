@@ -536,3 +536,56 @@ def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]
         else:
             results.append({"display_id": task["display_id"], "status": "still_unresolved"})
     return results
+
+
+import json as _json
+
+
+def _parse_json_array(text: str) -> list:
+    """Extract a JSON array from LLM response text (strips markdown/preamble)."""
+    match = re.search(r'\[[\s\S]*\]', text)
+    if not match:
+        raise ValueError(f"LLM response contained no JSON array: {text[:200]}")
+    return _json.loads(match.group())
+
+
+def cli_dump(conn: sqlite3.Connection, llm_client, raw_text: str) -> dict:
+    """
+    CLI brain dump: split raw text, get templates, fill via LLM, save.
+    Returns {count, display_ids}.
+    """
+    fragments = [f.strip() for f in re.split(r'[,;]|(?<!\w)and(?!\w)', raw_text)
+                 if f.strip()]
+    templates_result = get_dump_templates(fragments, events=[])
+
+    system = (
+        "You are a task parser. Fill every '?' in each template using context from the task "
+        "description. Return ONLY a valid JSON array — no markdown, no explanation. "
+        "Valid values are in the schema. Omit optional fields (due_at, due_event_label, "
+        "due_event_offset_min) unless the task clearly implies them."
+    )
+    user = (
+        f"Schema: {_json.dumps(templates_result['schema'])}\n\n"
+        f"Templates:\n{_json.dumps(templates_result['templates'], indent=2)}"
+    )
+
+    raw_response = llm_client.complete(system=system, user=user)
+    filled = _parse_json_array(raw_response)
+
+    task_inputs = [
+        TaskInput(
+            title=t.get("title", ""),
+            raw=t.get("raw") or t.get("title", ""),
+            priority=t.get("priority", "medium"),
+            urgent=bool(t.get("urgent", False)),
+            category=t.get("category", "other"),
+            effort=t.get("effort") or None,
+            due_at=t.get("due_at"),
+            due_event_label=t.get("due_event_label"),
+            due_event_offset_min=t.get("due_event_offset_min"),
+        )
+        for t in filled
+    ]
+    display_ids = dump_tasks(conn, task_inputs)
+    logger.info("cli_dump: saved %d tasks", len(display_ids))
+    return {"count": len(display_ids), "display_ids": display_ids}

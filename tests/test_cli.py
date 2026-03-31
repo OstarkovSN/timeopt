@@ -99,3 +99,86 @@ def test_config_set_and_get(runner, cli_env):
     assert result.exit_code == 0
     result = runner.invoke(cli, ["config", "get", "day_start"])
     assert "08:00" in result.output
+
+
+def test_done_marks_task(runner, cli_env):
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "fix login bug", "raw": "fix login bug",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["done", "fix login"])
+    assert result.exit_code == 0
+    assert "✓" in result.output
+    conn = db.get_connection(cli_env)
+    row = conn.execute("SELECT status FROM tasks").fetchone()
+    conn.close()
+    assert row[0] == "done"
+
+
+def test_done_ambiguous_prompts_user(runner, cli_env):
+    from timeopt.cli import cli
+    _seed(cli_env,
+        {"title": "fix login bug", "raw": "fix login bug",
+         "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+        {"title": "fix login redirect", "raw": "fix login redirect",
+         "priority": "high", "urgent": False, "category": "work", "effort": "small"},
+    )
+    conn = db.get_connection(cli_env)
+    core.set_config(conn, "fuzzy_match_ask_gap", "100")  # force ambiguity
+    conn.close()
+    result = runner.invoke(cli, ["done", "login"], input="0\n")  # user skips
+    assert result.exit_code == 0
+
+
+def test_done_no_match(runner, cli_env):
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["done", "xyzzy nonexistent task qqqq"])
+    assert result.exit_code == 0
+    assert "No confident match" in result.output
+
+
+def test_dump_with_mocked_llm(runner, cli_env):
+    from timeopt.cli import cli
+    mock_llm = MagicMock()
+    mock_llm.complete.return_value = (
+        '[{"raw": "fix login", "title": "fix login", "priority": "high",'
+        ' "urgent": false, "category": "work", "effort": "medium"}]'
+    )
+    with patch("timeopt.cli._get_llm_client", return_value=mock_llm):
+        result = runner.invoke(cli, ["dump", "fix login bug"])
+    assert result.exit_code == 0
+    assert "Added" in result.output
+    assert "#1-fix-login" in result.output
+
+
+def test_check_urgent_no_q3(runner, cli_env):
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "important project", "raw": "important",
+                    "priority": "high", "urgent": False,
+                    "category": "work", "effort": "large"})
+    result = runner.invoke(cli, ["check-urgent"])
+    assert result.exit_code == 0
+    assert "No Q3" in result.output or "All clear" in result.output
+
+
+def test_check_urgent_shows_q3(runner, cli_env):
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "reply to accountant", "raw": "reply to accountant",
+                    "priority": "low", "urgent": True,
+                    "category": "work", "effort": "small"})
+    result = runner.invoke(cli, ["check-urgent"])
+    assert result.exit_code == 0
+    assert "Q3" in result.output
+
+
+def test_sync_no_caldav(runner, cli_env):
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["sync"])
+    assert result.exit_code == 0
+    assert "CalDAV not configured" in result.output
+
+
+def test_plan_no_tasks(runner, cli_env):
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["plan", "--date", "2026-03-28"])
+    assert result.exit_code == 0
+    assert "No tasks" in result.output
