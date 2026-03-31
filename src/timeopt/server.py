@@ -211,3 +211,164 @@ def set_config(key: str, value: str) -> dict:
         return {"ok": True, "key": key, "value": value}
     finally:
         conn.close()
+
+
+@mcp.tool()
+def get_dump_templates(fragments: list) -> dict:
+    """
+    Build sparse task templates from raw text fragments for Claude to fill.
+    Fetches CalDAV events for calendar reference detection (next 30 days).
+    Returns {schema: {...}, templates: [{raw, title, priority: "?", ...}]}.
+    """
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav(conn)
+        events = []
+        if caldav:
+            try:
+                events_raw = caldav.get_events(_date_type.today().isoformat(), days=30)
+                events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
+            except Exception:
+                logger.exception("get_dump_templates: CalDAV unavailable, skipping event detection")
+        return core.get_dump_templates(fragments, events)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def dump_tasks(tasks: list) -> dict:
+    """
+    Save a batch of filled task objects. Returns {count, display_ids}.
+    tasks should be completed templates from get_dump_templates.
+    """
+    conn = _open_conn()
+    try:
+        task_inputs = [_dict_to_task_input(t) for t in tasks]
+        display_ids = core.dump_tasks(conn, task_inputs)
+        return {"count": len(display_ids), "display_ids": display_ids}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def resolve_calendar_reference(label: str, date_range: Optional[dict] = None) -> dict:
+    """
+    Fuzzy-match a textual event label against real CalDAV events.
+    Returns {candidates: [{uid, title, start, end, score}]}.
+    date_range: optional {start: "YYYY-MM-DD", end: "YYYY-MM-DD"} (default: next 30 days).
+    """
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav(conn)
+        if not caldav:
+            return {"candidates": [], "error": "CalDAV not configured"}
+        start_date = _date_type.today()
+        days = 30
+        if date_range:
+            if date_range.get("start"):
+                start_date = _datetime.fromisoformat(date_range["start"]).date()
+            if date_range.get("end"):
+                end_date = _datetime.fromisoformat(date_range["end"]).date()
+                days = max(1, (end_date - start_date).days)
+        events_raw = caldav.get_events(start_date.isoformat(), days=days)
+        events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
+        match = core.resolve_calendar_reference(label, events)
+        return {"candidates": [match] if match else []}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def get_calendar_events(date: Optional[str] = None, days: int = 1) -> dict:
+    """
+    Fetch events from all configured read calendars. Read-only.
+    Returns {events: [{title, start, end, uid}]}. Defaults to today.
+    """
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav(conn)
+        if not caldav:
+            return {"events": [], "warning": "CalDAV not configured"}
+        target = _parse_date(date).isoformat()
+        events = caldav.get_events(target, days=days)
+        return {"events": [
+            {"title": e.title, "start": e.start, "end": e.end, "uid": e.uid}
+            for e in events
+        ]}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def get_plan_proposal(date: Optional[str] = None) -> dict:
+    """
+    Server-side scheduling for the given date (default today).
+    Fetches calendar events for free/busy; warns but proceeds if CalDAV unavailable.
+    Returns {blocks: [{task_id, display_id, title, start, duration_min, quadrant}],
+             deferred: [...]}.
+    """
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav(conn)
+        target = _parse_date(date).isoformat()
+        events = []
+        if caldav:
+            try:
+                events_raw = caldav.get_events(target, days=1)
+                events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
+            except Exception:
+                logger.exception("get_plan_proposal: CalDAV unavailable, planning without calendar")
+        return planner.get_plan_proposal(conn, events, target)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def push_calendar_blocks(blocks: list, date: Optional[str] = None) -> dict:
+    """
+    Transactional push: all CalDAV writes collected first, SQLite committed only on success.
+    blocks: list of {task_id, display_id, title, start, duration_min, quadrant}.
+    Returns {ok: bool, pushed: int}.
+    """
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav(conn)
+        if not caldav:
+            return {"ok": False, "error": "CalDAV not configured"}
+        target = _parse_date(date).isoformat()
+        planner.push_calendar_blocks(conn, {"blocks": blocks}, target, caldav)
+        return {"ok": True, "pushed": len(blocks)}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def sync_calendar(date_range_days: int = 30) -> dict:
+    """
+    Sync calendar event bindings:
+    1. Updates due_at for tasks bound to moved events (algorithmic).
+    2. Attempts to resolve tasks with unresolved calendar references.
+    Returns {ok, updated: [...], resolved: [...], unresolved_remaining: [...]}.
+    """
+    conn = _open_conn()
+    try:
+        caldav = _get_caldav(conn)
+        if not caldav:
+            return {"ok": False, "error": "CalDAV not configured"}
+        events_raw = caldav.get_events(_date_type.today().isoformat(), days=date_range_days)
+        events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
+        updated = core.sync_bound_tasks(conn, events)
+        resolved = core.try_resolve_unresolved(conn, events)
+        still_unresolved = core.get_unresolved_tasks(conn)
+        return {
+            "ok": True,
+            "updated": updated,
+            "resolved": resolved,
+            "unresolved_remaining": still_unresolved,
+        }
+    finally:
+        conn.close()
+
+
+def main():
+    mcp.run(transport="stdio")

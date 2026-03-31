@@ -124,3 +124,85 @@ def test_get_all_config(server_env):
     result = get_config()
     assert "day_start" in result
     assert "day_end" in result
+
+
+def test_get_dump_templates(server_env):
+    from timeopt.server import get_dump_templates
+    result = get_dump_templates(fragments=["fix login bug", "deploy before noon"])
+    assert "schema" in result
+    assert "templates" in result
+    assert len(result["templates"]) == 2
+    # Simple task: no due_at pre-filled
+    assert "due_at" not in result["templates"][0]
+    # Time reference: due_at pre-filled
+    assert "due_at" in result["templates"][1]
+
+
+def test_dump_task_returns_id_and_display_id(server_env):
+    from timeopt.server import dump_task
+    result = dump_task(task={
+        "raw": "prep report before meeting with Jeff",
+        "title": "prep report",
+        "priority": "high",
+        "urgent": False,
+        "category": "work",
+        "effort": "large",
+        "due_event_label": "meeting with Jeff",
+        "due_event_offset_min": -30,
+    })
+    assert "display_id" in result
+    assert "id" in result
+    assert result["id"] is not None
+
+
+def test_dump_tasks_batch(server_env):
+    from timeopt.server import dump_tasks, list_tasks
+    result = dump_tasks(tasks=[
+        {"raw": "a", "title": "task a", "priority": "high",
+         "urgent": False, "category": "work", "effort": "small"},
+        {"raw": "b", "title": "task b", "priority": "low",
+         "urgent": False, "category": "personal", "effort": "small"},
+    ])
+    assert result["count"] == 2
+    assert len(result["display_ids"]) == 2
+    assert len(list_tasks()["tasks"]) == 2
+
+
+def test_get_calendar_events_no_caldav(server_env):
+    from timeopt.server import get_calendar_events
+    result = get_calendar_events()
+    assert "events" in result
+    # No CalDAV configured: empty list with warning
+    assert result["events"] == []
+    assert "warning" in result
+
+
+def test_resolve_calendar_reference_no_caldav(server_env):
+    from timeopt.server import resolve_calendar_reference
+    result = resolve_calendar_reference(label="meeting with Jeff")
+    assert "candidates" in result
+    assert result["candidates"] == []
+    assert "error" in result
+
+
+def test_get_plan_proposal_no_caldav(server_env):
+    from timeopt.server import dump_task, get_plan_proposal
+    dump_task(task={"raw": "fix login", "title": "fix login",
+                    "priority": "high", "urgent": False,
+                    "category": "work", "effort": "medium"})
+    result = get_plan_proposal(date="2026-03-28")
+    assert "blocks" in result
+
+
+def test_push_calendar_blocks_no_caldav(server_env):
+    from timeopt.server import push_calendar_blocks
+    result = push_calendar_blocks(blocks=[], date="2026-03-28")
+    assert result["ok"] is False
+    assert "error" in result
+
+
+def test_sync_calendar_no_caldav(server_env):
+    from timeopt.server import sync_calendar
+    result = sync_calendar()
+    assert result["ok"] is False
+    assert "error" in result
