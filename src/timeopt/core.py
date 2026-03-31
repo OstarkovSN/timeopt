@@ -443,3 +443,96 @@ def dump_tasks(conn: sqlite3.Connection, tasks: list[TaskInput]) -> list[str]:
     _auto_classify(conn)
     logger.info("dump_tasks: saved %d tasks", len(display_ids))
     return display_ids
+
+
+def sync_bound_tasks(conn: sqlite3.Connection, events: list) -> list[dict]:
+    """
+    Algorithmic sync: update due_at for bound tasks based on current calendar events.
+    Returns list of changes: {display_id, old_due_at, new_due_at, status}
+    status: "updated" | "event_missing"
+    Only touches tasks with due_event_uid set.
+    """
+    rows = conn.execute(
+        "SELECT id, display_id, due_event_uid, due_event_offset_min, due_at "
+        "FROM tasks WHERE due_event_uid IS NOT NULL AND status IN ('pending','delegated')"
+    ).fetchall()
+
+    if not rows:
+        return []
+
+    events_by_uid = {ev.uid: ev for ev in events}
+    changes = []
+
+    for row in rows:
+        uid = row["due_event_uid"]
+        offset = row["due_event_offset_min"] or 0
+
+        if uid not in events_by_uid:
+            changes.append({
+                "display_id": row["display_id"],
+                "old_due_at": row["due_at"],
+                "new_due_at": row["due_at"],  # preserved
+                "status": "event_missing",
+            })
+            continue
+
+        ev = events_by_uid[uid]
+        event_start = datetime.fromisoformat(ev.start.replace("Z", "+00:00"))
+        new_due_at = (event_start + timedelta(minutes=offset)).isoformat()
+
+        if new_due_at != row["due_at"]:
+            conn.execute(
+                "UPDATE tasks SET due_at=? WHERE id=?", (new_due_at, row["id"])
+            )
+            changes.append({
+                "display_id": row["display_id"],
+                "old_due_at": row["due_at"],
+                "new_due_at": new_due_at,
+                "status": "updated",
+            })
+
+    conn.commit()
+    logger.info("sync_bound_tasks: %d changes", len(changes))
+    return changes
+
+
+def get_unresolved_tasks(conn: sqlite3.Connection) -> list[dict]:
+    """Return tasks with due_unresolved=True."""
+    rows = conn.execute(
+        "SELECT id, display_id, due_event_label FROM tasks "
+        "WHERE due_unresolved=1 AND status IN ('pending','delegated')"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]:
+    """
+    Attempt to bind unresolved tasks to calendar events.
+    Returns list of {display_id, status: "resolved" | "still_unresolved"}.
+    """
+    unresolved = get_unresolved_tasks(conn)
+    results = []
+    for task in unresolved:
+        label = task["due_event_label"]
+        if not label:
+            continue
+        match = resolve_calendar_reference(label, events)
+        if match:
+            event_start = datetime.fromisoformat(
+                match["start"].replace("Z", "+00:00")
+            )
+            row = conn.execute(
+                "SELECT due_event_offset_min FROM tasks WHERE id=?", (task["id"],)
+            ).fetchone()
+            offset = row[0] if row and row[0] is not None else 0
+            new_due_at = (event_start + timedelta(minutes=offset)).isoformat()
+            conn.execute(
+                "UPDATE tasks SET due_event_uid=?, due_at=?, due_unresolved=0 WHERE id=?",
+                (match["uid"], new_due_at, task["id"]),
+            )
+            conn.commit()
+            results.append({"display_id": task["display_id"], "status": "resolved"})
+            logger.info("resolved task %s to event uid=%s", task["display_id"], match["uid"])
+        else:
+            results.append({"display_id": task["display_id"], "status": "still_unresolved"})
+    return results
