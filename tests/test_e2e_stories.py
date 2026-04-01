@@ -110,3 +110,42 @@ async def test_story_view_tasks_sort_order(tmp_path):
             assert statuses["reply to newsletter"] == "delegated"
             pending_count = sum(1 for t in listed2["tasks"] if t["status"] == "pending")
             assert pending_count == 3
+
+
+@pytest.mark.e2e
+async def test_story_mark_done(tmp_path):
+    """Mark Done story: fuzzy_match_tasks resolves queries → mark_done → pending list empty."""
+    params = _server_params(str(tmp_path / "e2e.db"))
+    async with stdio_client(params) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+
+            # Seed two tasks via MCP (fully e2e)
+            _call(await session.call_tool("dump_task", {"task": {
+                "title": "fix login bug", "priority": "high", "urgent": False,
+                "category": "work", "effort": "medium",
+            }}))
+            _call(await session.call_tool("dump_task", {"task": {
+                "title": "prep slides for thursday", "priority": "high", "urgent": False,
+                "category": "work", "effort": "large",
+            }}))
+
+            # Step 1 — fuzzy match "fix login" → high-confidence hit
+            m1 = _call(await session.call_tool("fuzzy_match_tasks", {"query": "fix login"}))
+            assert len(m1["candidates"]) > 0
+            assert m1["candidates"][0]["score"] >= 80
+            uuid_1 = m1["candidates"][0]["task_id"]
+
+            # Step 2 — fuzzy match "prep slides" → high-confidence hit
+            m2 = _call(await session.call_tool("fuzzy_match_tasks", {"query": "prep slides"}))
+            assert len(m2["candidates"]) > 0
+            assert m2["candidates"][0]["score"] >= 80
+            uuid_2 = m2["candidates"][0]["task_id"]
+
+            # Step 3 — mark both done in one call
+            done = _call(await session.call_tool("mark_done", {"task_ids": [uuid_1, uuid_2]}))
+            assert done == {"ok": True}
+
+            # Step 4 — pending list is now empty
+            pending = _call(await session.call_tool("list_tasks", {"status": "pending"}))
+            assert pending["tasks"] == []
