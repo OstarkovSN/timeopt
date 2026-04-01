@@ -149,3 +149,34 @@ async def test_story_mark_done(tmp_path):
             # Step 4 — pending list is now empty
             pending = _call(await session.call_tool("list_tasks", {"status": "pending"}))
             assert pending["tasks"] == []
+
+
+@pytest.mark.e2e
+async def test_story_daily_plan(tmp_path):
+    """Daily Plan story: get_plan_proposal returns Q1 block scheduled before Q2 block."""
+    db_path = str(tmp_path / "e2e.db")
+    conn = get_connection(db_path)
+    create_schema(conn)
+    dump_task(conn, TaskInput(title="fix critical outage",    raw="fix critical outage",    priority="high", urgent=True,  category="work", effort="medium"))  # Q1
+    dump_task(conn, TaskInput(title="write quarterly report", raw="write quarterly report", priority="high", urgent=False, category="work", effort="medium"))  # Q2
+    conn.close()
+
+    params = _server_params(db_path)
+    async with stdio_client(params) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+
+            result = _call(await session.call_tool("get_plan_proposal", {"date": "2026-04-02"}))
+            assert "blocks" in result
+            blocks = result["blocks"]
+            assert len(blocks) >= 2
+
+            # Each block has required fields
+            required_keys = {"task_id", "display_id", "title", "start", "duration_min", "quadrant"}
+            for block in blocks:
+                assert required_keys <= block.keys(), f"block missing keys: {required_keys - block.keys()}"
+
+            # Q1 block must come before Q2 block
+            q1_idx = next(i for i, b in enumerate(blocks) if b["quadrant"] == "Q1")
+            q2_idx = next(i for i, b in enumerate(blocks) if b["quadrant"] == "Q2")
+            assert q1_idx < q2_idx
