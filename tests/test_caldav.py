@@ -168,3 +168,177 @@ def test_create_tasks_calendar_if_missing():
         client._ensure_tasks_calendar(mock_principal)
 
     mock_principal.make_calendar.assert_called_once_with(name="Timeopt")
+
+
+def test_create_event_save_event_failure_propagates():
+    """When save_event() raises, the exception should propagate to caller."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # save_event raises
+        mock_tasks_cal.save_event.side_effect = Exception("Permission denied")
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        # Exception should propagate
+        try:
+            client.create_event(
+                title="New event",
+                start="2026-03-28T10:00:00+00:00",
+                end="2026-03-28T11:00:00+00:00",
+            )
+            assert False, "Expected exception to propagate"
+        except Exception as e:
+            assert str(e) == "Permission denied"
+
+
+def test_delete_event_swallows_failures_gracefully():
+    """When delete_event encounters exceptions, they should be logged but not re-raised."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # event_by_uid raises
+        mock_tasks_cal.event_by_uid.side_effect = Exception("Event not found")
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        # Should not raise, returns None
+        result = client.delete_event("uid-missing")
+        assert result is None
+
+
+def test_ensure_tasks_calendar_creation_failure_propagates():
+    """When principal.make_calendar() raises (permission error), exception should propagate."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+        # No Timeopt calendar
+        mock_principal.calendars.return_value = []
+        # make_calendar raises (permission error)
+        mock_principal.make_calendar.side_effect = Exception("403 Forbidden")
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        # Exception should propagate
+        try:
+            client._ensure_tasks_calendar(mock_principal)
+            assert False, "Expected exception to propagate"
+        except Exception as e:
+            assert str(e) == "403 Forbidden"
+
+
+def test_get_events_partial_failure():
+    """When one calendar fails during date_search, others' events are still returned."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+
+        # Two calendars: Work (succeeds) and Personal (fails)
+        work_cal = MagicMock()
+        type(work_cal).name = PropertyMock(return_value="Work")
+        personal_cal = MagicMock()
+        type(personal_cal).name = PropertyMock(return_value="Personal")
+        mock_principal.calendars.return_value = [work_cal, personal_cal]
+
+        # Work calendar succeeds
+        ev1 = _mock_event("Team sync", "2026-03-28T09:00:00+00:00", "2026-03-28T10:00:00+00:00")
+        work_cal.date_search.return_value = [ev1]
+
+        # Personal calendar raises
+        personal_cal.date_search.side_effect = Exception("timeout")
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+        events = client.get_events("2026-03-28")
+
+        # Should return events from Work calendar only
+        assert len(events) == 1
+        assert events[0].title == "Team sync"
+
+
+def test_create_event_uid_fallback():
+    """When event.instance.vevent.uid.value raises, use locally-generated UUID."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # Create event that raises when accessing uid
+        created_event = MagicMock()
+        type(created_event.instance.vevent.uid).value = PropertyMock(side_effect=Exception("no uid"))
+        mock_tasks_cal.save_event.return_value = created_event
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        uid = client.create_event(
+            title="Event without server UID",
+            start="2026-03-28T10:00:00+00:00",
+            end="2026-03-28T11:00:00+00:00",
+        )
+
+        # Should return the locally-generated UUID (not the server one)
+        # Verify it's a valid UUID format
+        import uuid
+        try:
+            uuid.UUID(uid)
+        except ValueError:
+            assert False, f"Expected valid UUID, got {uid}"
