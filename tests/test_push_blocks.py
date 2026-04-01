@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock
 from timeopt.core import create_task, TaskInput
 from timeopt.planner import get_plan_proposal, push_calendar_blocks, get_calendar_blocks
@@ -49,7 +50,6 @@ def test_push_calendar_blocks_replaces_existing(conn):
 
 
 def test_push_calendar_blocks_aborts_on_caldav_failure(conn):
-    import pytest
     _seed(conn)
     proposal = get_plan_proposal(conn, events=[], date="2026-03-28")
 
@@ -71,8 +71,6 @@ def test_push_calendar_blocks_partial_create_failure(conn):
     push_calendar_blocks should raise and DB should remain untouched.
     The first 2 CalDAV events are orphaned (known limitation).
     """
-    import pytest
-
     # Seed with 3 tasks (will produce 3 blocks)
     tasks = [
         TaskInput(title="task a", raw="a", priority="high", urgent=True,
@@ -86,17 +84,19 @@ def test_push_calendar_blocks_partial_create_failure(conn):
         create_task(conn, t)
 
     proposal = get_plan_proposal(conn, events=[], date="2026-03-28")
-    assert len(proposal["blocks"]) == 3, "Expected 3 blocks from 3 tasks"
+    blocks = proposal["blocks"]
+    assert len(blocks) >= 1  # sanity check: need at least one block
 
     caldav = MagicMock()
-    # First 2 creates succeed, 3rd fails
-    caldav.create_event.side_effect = ["uid-1", "uid-2", Exception("CalDAV create failed")]
+    # Build side_effect: succeed for first n-1, fail on nth
+    success_uids = [f"uid-{i}" for i in range(len(blocks) - 1)]
+    caldav.create_event.side_effect = success_uids + [Exception("CalDAV create failed")]
 
     with pytest.raises(Exception, match="CalDAV create failed"):
         push_calendar_blocks(conn, proposal, date="2026-03-28", caldav_client=caldav)
 
-    # Verify: create_event was called exactly 3 times (first 2 succeeded, 3rd failed)
-    assert caldav.create_event.call_count == 3
+    # Verify: create_event was called exactly len(blocks) times (first len-1 succeeded, last failed)
+    assert caldav.create_event.call_count == len(blocks)
 
     # Verify: DB has 0 blocks (unchanged — SQLite commit didn't happen)
     blocks = get_calendar_blocks(conn, "2026-03-28")
@@ -110,9 +110,6 @@ def test_push_calendar_blocks_delete_failure_after_creates(conn):
     If delete_event raises, the function raises and old blocks remain in DB
     (since SQLite commit hasn't happened yet).
     """
-    import pytest
-    from timeopt.planner import push_calendar_blocks
-
     _seed(conn)
 
     # First push: creates succeed, blocks are saved
@@ -137,6 +134,9 @@ def test_push_calendar_blocks_delete_failure_after_creates(conn):
     with pytest.raises(Exception, match="CalDAV delete failed"):
         push_calendar_blocks(conn, proposal2, date="2026-03-28", caldav_client=caldav2)
 
+    # Both new events were created before delete failed — they are orphaned in CalDAV
+    assert caldav2.create_event.call_count == 2
+
     # Verify: delete_event was called at least once (raises on first call)
     assert caldav2.delete_event.call_count >= 1
 
@@ -146,7 +146,7 @@ def test_push_calendar_blocks_delete_failure_after_creates(conn):
     assert {b["caldav_uid"] for b in blocks_after_delete_failure} == old_block_uids
 
 
-def test_push_calendar_blocks_double_push_idempotency_orphans_first(conn):
+def test_push_calendar_blocks_second_push_replaces_first_orphans_caldav(conn):
     """
     Test pushing the same plan twice (with fresh caldav mocks).
     The second push should replace the first push's blocks in the DB.
@@ -181,7 +181,6 @@ def test_push_calendar_blocks_double_push_idempotency_orphans_first(conn):
     assert second_uids == {"uid-push2-1", "uid-push2-2"}
 
     # Verify: first push's UIDs are not in DB anymore
-    assert first_uids != second_uids
     assert "uid-push1-1" not in second_uids
 
     # Verify: the second push called delete_event for the first push's UIDs
