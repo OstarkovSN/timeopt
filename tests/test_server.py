@@ -1,7 +1,8 @@
 import os
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from timeopt import db, core
+from timeopt.caldav_client import CalendarEvent
 
 
 @pytest.fixture
@@ -206,3 +207,297 @@ def test_sync_calendar_no_caldav(server_env):
     result = sync_calendar()
     assert result["ok"] is False
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Block 2: CalDAV success paths
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_caldav(server_env):
+    """Patches _get_caldav to return a preconfigured MagicMock."""
+    mock = MagicMock()
+    mock.get_events.return_value = []
+    mock.create_event.return_value = "uid-default"
+    with patch("timeopt.server._get_caldav", return_value=mock):
+        yield mock
+
+
+def test_get_calendar_events_with_caldav(mock_caldav):
+    from timeopt.server import get_calendar_events
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="abc-123", title="Team sync",
+                      start="2026-04-01T09:00:00+00:00",
+                      end="2026-04-01T10:00:00+00:00"),
+    ]
+    result = get_calendar_events(date="2026-04-01")
+    assert result["events"] == [
+        {"title": "Team sync", "start": "2026-04-01T09:00:00+00:00",
+         "end": "2026-04-01T10:00:00+00:00", "uid": "abc-123"}
+    ]
+
+
+def test_resolve_calendar_reference_match_found(mock_caldav):
+    from timeopt.server import resolve_calendar_reference
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-jeff", title="Meeting with Jeff",
+                      start="2026-04-01T14:00:00+00:00",
+                      end="2026-04-01T15:00:00+00:00"),
+    ]
+    result = resolve_calendar_reference(label="meeting with Jeff")
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["uid"] == "uid-jeff"
+    assert result["candidates"][0]["score"] > 50
+
+
+def test_resolve_calendar_reference_no_match(mock_caldav):
+    from timeopt.server import resolve_calendar_reference
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-dentist", title="Dentist appointment",
+                      start="2026-04-01T10:00:00+00:00",
+                      end="2026-04-01T11:00:00+00:00"),
+    ]
+    result = resolve_calendar_reference(label="quarterly board meeting xyzzy")
+    assert result["candidates"] == []
+
+
+def test_get_plan_proposal_with_caldav_events(mock_caldav):
+    from timeopt.server import dump_task, get_plan_proposal
+    dump_task(task={"raw": "fix login", "title": "fix login",
+                    "priority": "high", "urgent": False,
+                    "category": "work", "effort": "medium"})
+    # Morning event occupies 09:00–10:00; task should schedule in remaining time
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="ev-standup", title="Morning standup",
+                      start="2026-04-01T09:00:00+00:00",
+                      end="2026-04-01T10:00:00+00:00"),
+    ]
+    result = get_plan_proposal(date="2026-04-01")
+    assert "blocks" in result
+    assert len(result["blocks"]) > 0
+    # Block must not overlap the morning event
+    assert result["blocks"][0]["start"] >= "2026-04-01T10:00:00"
+
+
+def test_push_calendar_blocks_success(mock_caldav):
+    from timeopt.server import dump_task, push_calendar_blocks
+    dumped = dump_task(task={"raw": "fix login", "title": "fix login",
+                              "priority": "high", "urgent": False,
+                              "category": "work", "effort": "medium"})
+    mock_caldav.create_event.return_value = "uid-cal-1"
+    blocks = [{
+        "task_id": dumped["id"],
+        "display_id": dumped["display_id"],
+        "title": "fix login",
+        "start": "2026-04-01T10:00:00+00:00",
+        "duration_min": 60,
+        "quadrant": "Q2",
+    }]
+    result = push_calendar_blocks(blocks=blocks, date="2026-04-01")
+    assert result["ok"] is True
+    assert result["pushed"] == 1
+    mock_caldav.create_event.assert_called_once()
+
+
+def test_push_calendar_blocks_replaces_uids(mock_caldav):
+    from timeopt.server import dump_task, push_calendar_blocks
+    dumped = dump_task(task={"raw": "write report", "title": "write report",
+                              "priority": "medium", "urgent": False,
+                              "category": "work", "effort": "small"})
+    blocks = [{
+        "task_id": dumped["id"],
+        "display_id": dumped["display_id"],
+        "title": "write report",
+        "start": "2026-04-01T10:00:00+00:00",
+        "duration_min": 30,
+        "quadrant": "Q2",
+    }]
+    mock_caldav.create_event.return_value = "uid-old"
+    push_calendar_blocks(blocks=blocks, date="2026-04-01")
+
+    mock_caldav.create_event.return_value = "uid-new"
+    result = push_calendar_blocks(blocks=blocks, date="2026-04-01")
+    assert result["ok"] is True
+    mock_caldav.delete_event.assert_called_with("uid-old")
+
+
+def _seed_bound_task(server_env, due_event_uid="uid-jeff",
+                     due_at="2026-04-01T13:30:00+00:00"):
+    db_path = server_env
+    conn = db.get_connection(db_path)
+    core.create_task(conn, core.TaskInput(
+        title="prep report", raw="prep before meeting",
+        priority="high", urgent=False, category="work", effort="large",
+        due_at=due_at,
+        due_event_uid=due_event_uid,
+        due_event_offset_min=-30,
+    ))
+    conn.close()
+
+
+def _seed_unresolved_task(server_env, label="board meeting"):
+    db_path = server_env
+    conn = db.get_connection(db_path)
+    core.create_task(conn, core.TaskInput(
+        title="board prep", raw="prep before board meeting",
+        priority="high", urgent=False, category="work", effort="large",
+        due_event_label=label,
+        due_unresolved=True,
+    ))
+    conn.close()
+
+
+def test_sync_calendar_updated(mock_caldav, server_env):
+    from timeopt.server import sync_calendar
+    _seed_bound_task(server_env)
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-jeff", title="Meeting with Jeff",
+                      start="2026-04-02T14:00:00+00:00",  # moved by one day
+                      end="2026-04-02T15:00:00+00:00"),
+    ]
+    result = sync_calendar()
+    assert result["ok"] is True
+    assert len(result["updated"]) == 1
+    assert result["updated"][0]["status"] == "updated"
+
+
+def test_sync_calendar_resolved(mock_caldav, server_env):
+    from timeopt.server import sync_calendar
+    _seed_unresolved_task(server_env, label="board meeting")
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-board", title="Board Meeting",
+                      start="2026-04-15T10:00:00+00:00",
+                      end="2026-04-15T11:00:00+00:00"),
+    ]
+    result = sync_calendar()
+    assert result["ok"] is True
+    assert len(result["resolved"]) == 1
+
+
+def test_sync_calendar_still_unresolved(mock_caldav, server_env):
+    from timeopt.server import sync_calendar
+    _seed_unresolved_task(server_env, label="very specific obscure event xyzzy")
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-other", title="Dentist appointment",
+                      start="2026-04-10T09:00:00+00:00",
+                      end="2026-04-10T10:00:00+00:00"),
+    ]
+    result = sync_calendar()
+    assert result["ok"] is True
+    assert len(result["unresolved_remaining"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Block 3: get_plan_proposal — actual scheduling
+# ---------------------------------------------------------------------------
+
+def test_get_plan_proposal_produces_populated_blocks(mock_caldav):
+    """Server wrapper schedules seeded tasks into a non-empty blocks list."""
+    from timeopt.server import dump_task, get_plan_proposal
+    dump_task(task={"raw": "fix login", "title": "fix login",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "small"})
+    result = get_plan_proposal(date="2026-04-01")
+    assert "blocks" in result
+    assert len(result["blocks"]) > 0
+    block = result["blocks"][0]
+    assert block["title"] == "fix login"
+    assert "start" in block
+    assert "duration_min" in block
+    assert "quadrant" in block
+
+
+def test_get_plan_proposal_caldav_event_conversion(mock_caldav):
+    """CalendarEvent objects are correctly converted to dicts; events carve free slots."""
+    from timeopt.server import dump_task, get_plan_proposal
+    dump_task(task={"raw": "afternoon task", "title": "afternoon task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "small"})
+    # Event uses "Z" suffix — exercises replace("Z", "+00:00") parsing path
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="ev-morning", title="Morning standup",
+                      start="2026-04-01T09:00:00Z",
+                      end="2026-04-01T11:00:00Z"),
+    ]
+    result = get_plan_proposal(date="2026-04-01")
+    assert len(result["blocks"]) > 0
+    # Task must be scheduled after the event, not during it
+    assert result["blocks"][0]["start"] >= "2026-04-01T11:00:00"
+
+
+def test_get_plan_proposal_quadrant_ordering(mock_caldav):
+    """Blocks appear in Q1 → Q2 → Q3 → Q4 order."""
+    from timeopt.server import dump_task, get_plan_proposal
+    dump_task(task={"raw": "q4 task", "title": "q4 task",
+                    "priority": "low", "urgent": False,
+                    "category": "work", "effort": "small"})
+    dump_task(task={"raw": "q3 task", "title": "q3 task",
+                    "priority": "low", "urgent": True,
+                    "category": "work", "effort": "small"})
+    dump_task(task={"raw": "q2 task", "title": "q2 task",
+                    "priority": "high", "urgent": False,
+                    "category": "work", "effort": "small"})
+    dump_task(task={"raw": "q1 task", "title": "q1 task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "small"})
+    result = get_plan_proposal(date="2026-04-01")
+    quadrants = [b["quadrant"] for b in result["blocks"]]
+    for q in ("Q1", "Q2", "Q3", "Q4"):
+        assert q in quadrants, f"{q} missing from blocks"
+    assert quadrants.index("Q1") < quadrants.index("Q2")
+    assert quadrants.index("Q2") < quadrants.index("Q3")
+    assert quadrants.index("Q3") < quadrants.index("Q4")
+
+
+def test_get_plan_proposal_effort_mapping(mock_caldav):
+    """Effort sizes map to correct duration_min: small=30, medium=60, large=120."""
+    from timeopt.server import dump_task, get_plan_proposal
+    # All Q1 so no ordering ambiguity; use distinct titles for lookup
+    dump_task(task={"raw": "small task", "title": "small task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "small"})
+    dump_task(task={"raw": "medium task", "title": "medium task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "medium"})
+    dump_task(task={"raw": "large task", "title": "large task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "large"})
+    result = get_plan_proposal(date="2026-04-01")
+    durations = {b["title"]: b["duration_min"] for b in result["blocks"]}
+    assert durations["small task"] == 30
+    assert durations["medium task"] == 60
+    assert durations["large task"] == 120
+
+
+def test_get_plan_proposal_deferred_when_day_full(mock_caldav):
+    """Tasks that exceed available day capacity appear in deferred list."""
+    from timeopt.server import dump_task, get_plan_proposal, set_config
+    # Shrink work day to 1 hour so large tasks (120 min each) don't fit
+    set_config(key="day_start", value="09:00")
+    set_config(key="day_end", value="10:00")
+    for i in range(3):
+        dump_task(task={"raw": f"big task {i}", "title": f"big task {i}",
+                        "priority": "high", "urgent": True,
+                        "category": "work", "effort": "large"})
+    result = get_plan_proposal(date="2026-04-01")
+    assert "deferred" in result
+    assert len(result["deferred"]) > 0
+
+
+def test_get_plan_proposal_break_insertion(mock_caldav):
+    """Consecutive blocks have a break gap between end of first and start of next."""
+    from timeopt.server import dump_task, get_plan_proposal, get_config
+    from datetime import datetime, timedelta
+    dump_task(task={"raw": "first task", "title": "first task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "small"})
+    dump_task(task={"raw": "second task", "title": "second task",
+                    "priority": "high", "urgent": True,
+                    "category": "work", "effort": "small"})
+    result = get_plan_proposal(date="2026-04-01")
+    blocks = result["blocks"]
+    assert len(blocks) >= 2, "need at least 2 scheduled blocks to test break insertion"
+    break_min = int(get_config(key="break_duration_min")["value"])
+    first_end = datetime.fromisoformat(blocks[0]["start"]) + timedelta(minutes=blocks[0]["duration_min"])
+    second_start = datetime.fromisoformat(blocks[1]["start"])
+    assert second_start >= first_end + timedelta(minutes=break_min)
