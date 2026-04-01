@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import logging
 import re
@@ -538,15 +539,12 @@ def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]
     return results
 
 
-import json as _json
-
-
 def _parse_json_array(text: str) -> list:
     """Extract a JSON array from LLM response text (strips markdown/preamble)."""
     match = re.search(r'\[[\s\S]*\]', text)
     if not match:
         raise ValueError(f"LLM response contained no JSON array: {text[:200]}")
-    return _json.loads(match.group())
+    return json.loads(match.group())
 
 
 def cli_dump(conn: sqlite3.Connection, llm_client, raw_text: str) -> dict:
@@ -565,8 +563,8 @@ def cli_dump(conn: sqlite3.Connection, llm_client, raw_text: str) -> dict:
         "due_event_offset_min) unless the task clearly implies them."
     )
     user = (
-        f"Schema: {_json.dumps(templates_result['schema'])}\n\n"
-        f"Templates:\n{_json.dumps(templates_result['templates'], indent=2)}"
+        f"Schema: {json.dumps(templates_result['schema'])}\n\n"
+        f"Templates:\n{json.dumps(templates_result['templates'], indent=2)}"
     )
 
     raw_response = llm_client.complete(system=system, user=user)
