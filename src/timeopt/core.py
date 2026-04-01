@@ -297,7 +297,10 @@ def get_task(conn: sqlite3.Connection, task_id: str) -> dict:
     row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
     if not row:
         raise ValueError("Task not found: %s" % task_id)
-    return dict(row)
+    d = dict(row)
+    if "urgent" in d:
+        d["urgent"] = bool(d["urgent"])
+    return d
 
 
 def fuzzy_match_tasks(
