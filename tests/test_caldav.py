@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch, PropertyMock
 from datetime import datetime, timezone
+import uuid
+import pytest
 from timeopt.caldav_client import CalDAVClient, CalendarEvent
 
 
@@ -195,15 +197,12 @@ def test_create_event_save_event_failure_propagates():
         )
 
         # Exception should propagate
-        try:
+        with pytest.raises(Exception, match="Permission denied"):
             client.create_event(
                 title="New event",
                 start="2026-03-28T10:00:00+00:00",
                 end="2026-03-28T11:00:00+00:00",
             )
-            assert False, "Expected exception to propagate"
-        except Exception as e:
-            assert str(e) == "Permission denied"
 
 
 def test_delete_event_swallows_failures_gracefully():
@@ -230,9 +229,8 @@ def test_delete_event_swallows_failures_gracefully():
             tasks_calendar="Timeopt",
         )
 
-        # Should not raise, returns None
-        result = client.delete_event("uid-missing")
-        assert result is None
+        # Should not raise
+        client.delete_event("uid-missing")
 
 
 def test_ensure_tasks_calendar_creation_failure_propagates():
@@ -258,11 +256,8 @@ def test_ensure_tasks_calendar_creation_failure_propagates():
         )
 
         # Exception should propagate
-        try:
+        with pytest.raises(Exception, match="403 Forbidden"):
             client._ensure_tasks_calendar(mock_principal)
-            assert False, "Expected exception to propagate"
-        except Exception as e:
-            assert str(e) == "403 Forbidden"
 
 
 def test_get_events_partial_failure():
@@ -301,6 +296,7 @@ def test_get_events_partial_failure():
         # Should return events from Work calendar only
         assert len(events) == 1
         assert events[0].title == "Team sync"
+        personal_cal.date_search.assert_called_once()
 
 
 def test_create_event_uid_fallback():
@@ -318,7 +314,9 @@ def test_create_event_uid_fallback():
 
         # Create event that raises when accessing uid
         created_event = MagicMock()
-        type(created_event.instance.vevent.uid).value = PropertyMock(side_effect=Exception("no uid"))
+        uid_mock = MagicMock()
+        type(uid_mock).value = PropertyMock(side_effect=Exception("no uid"))
+        created_event.instance.vevent.uid = uid_mock
         mock_tasks_cal.save_event.return_value = created_event
 
         client = CalDAVClient(
@@ -337,8 +335,4 @@ def test_create_event_uid_fallback():
 
         # Should return the locally-generated UUID (not the server one)
         # Verify it's a valid UUID format
-        import uuid
-        try:
-            uuid.UUID(uid)
-        except ValueError:
-            assert False, f"Expected valid UUID, got {uid}"
+        uuid.UUID(uid)
