@@ -501,3 +501,102 @@ def test_get_plan_proposal_break_insertion(mock_caldav):
     first_end = datetime.fromisoformat(blocks[0]["start"]) + timedelta(minutes=blocks[0]["duration_min"])
     second_start = datetime.fromisoformat(blocks[1]["start"])
     assert second_start >= first_end + timedelta(minutes=break_min)
+
+
+# ---------------------------------------------------------------------------
+# Block 4: Server mutation tools — error paths
+# ---------------------------------------------------------------------------
+
+def test_get_task_nonexistent_uuid(server_env):
+    from timeopt.server import get_task
+    result = get_task(task_id="00000000-0000-0000-0000-000000000000")
+    assert "error" in result
+    assert "Task not found" in result["error"]
+
+
+def test_mark_done_nonexistent_uuid(server_env):
+    from timeopt.server import mark_done
+    result = mark_done(task_ids=["00000000-0000-0000-0000-000000000000"])
+    assert "error" in result
+    assert "Task not found" in result["error"]
+
+
+def test_mark_done_nonexistent_display_id(server_env):
+    from timeopt.server import mark_done
+    result = mark_done(task_ids=["#99-nonexistent-task"])
+    assert "error" in result
+    assert "Task not found" in result["error"]
+
+
+def test_mark_done_already_done_task(server_env):
+    from timeopt.server import dump_task, mark_done
+    dumped = dump_task(task={"raw": "finish report", "title": "finish report",
+                              "priority": "medium", "urgent": False,
+                              "category": "work", "effort": "small"})
+    mark_done(task_ids=[dumped["id"]])
+    # Second mark_done on same UUID — task is now "done", not active
+    result = mark_done(task_ids=[dumped["id"]])
+    assert "error" in result
+    assert "not active" in result["error"]
+
+
+def test_mark_delegated_nonexistent_uuid(server_env):
+    from timeopt.server import mark_delegated
+    result = mark_delegated(task_id="00000000-0000-0000-0000-000000000000")
+    assert "error" in result
+    assert "Pending task not found" in result["error"]
+
+
+def test_mark_delegated_nonexistent_display_id(server_env):
+    from timeopt.server import mark_delegated
+    result = mark_delegated(task_id="#99-nonexistent-task")
+    assert "error" in result
+    assert "Pending task not found" in result["error"]
+
+
+def test_update_task_notes_on_done_task(server_env):
+    from timeopt.server import dump_task, mark_done, update_task_notes
+    dumped = dump_task(task={"raw": "deploy to prod", "title": "deploy to prod",
+                              "priority": "high", "urgent": True,
+                              "category": "work", "effort": "small"})
+    mark_done(task_ids=[dumped["id"]])
+    result = update_task_notes(task_id=dumped["id"], notes="post-done note")
+    assert "error" in result
+    assert "not delegated" in result["error"]
+
+
+def test_return_to_pending_on_pending_task(server_env):
+    from timeopt.server import dump_task, return_to_pending
+    dumped = dump_task(task={"raw": "write tests", "title": "write tests",
+                              "priority": "medium", "urgent": False,
+                              "category": "work", "effort": "small"})
+    # Task is pending, not delegated — return_to_pending should error
+    result = return_to_pending(task_id=dumped["id"], notes="never was delegated")
+    assert "error" in result
+    assert "Delegated task not found" in result["error"]
+
+
+def test_return_to_pending_nonexistent_uuid(server_env):
+    from timeopt.server import return_to_pending
+    result = return_to_pending(task_id="00000000-0000-0000-0000-000000000000",
+                               notes="nothing here")
+    assert "error" in result
+    assert "Delegated task not found" in result["error"]
+
+
+def test_get_config_unknown_key(server_env):
+    from timeopt.server import get_config
+    result = get_config(key="totally_nonexistent_key_xyzzy")
+    assert "error" in result
+    assert "Unknown config key" in result["error"]
+
+
+def test_get_config_unknown_key_uses_key_error_not_value_error(server_env):
+    """core.get_config raises KeyError; server must catch KeyError separately (not ValueError).
+    If server catches ValueError instead, this test would fail because the error
+    would propagate as an uncaught exception rather than returning {"error": ...}."""
+    from timeopt.server import get_config
+    # This would raise an exception (not return a dict) if server caught ValueError only
+    result = get_config(key="unknown_key_abc123")
+    assert isinstance(result, dict)
+    assert "error" in result
