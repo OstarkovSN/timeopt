@@ -1,5 +1,6 @@
+import pytest
 from unittest.mock import MagicMock, patch
-from timeopt.llm_client import AnthropicClient, OpenAICompatibleClient, LLMClient
+from timeopt.llm_client import AnthropicClient, OpenAICompatibleClient, LLMClient, build_llm_client
 
 
 def test_anthropic_client_implements_interface():
@@ -40,7 +41,6 @@ def test_openai_compatible_client_calls_api():
 
 
 def test_anthropic_client_missing_key_raises():
-    import pytest
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
             AnthropicClient(api_key=None, model="claude-sonnet-4-6")
@@ -48,7 +48,6 @@ def test_anthropic_client_missing_key_raises():
 
 def test_build_llm_client_with_base_url_returns_openai_client():
     """When llm_base_url is set in config, build_llm_client should return OpenAICompatibleClient."""
-    from timeopt.llm_client import build_llm_client
     with patch("timeopt.llm_client.openai") as mock_openai:
         mock_client = MagicMock()
         mock_openai.OpenAI.return_value = mock_client
@@ -59,11 +58,15 @@ def test_build_llm_client_with_base_url_returns_openai_client():
         }
         client = build_llm_client(config)
         assert isinstance(client, OpenAICompatibleClient)
+        # Verify openai.OpenAI was called with the expected config values
+        mock_openai.OpenAI.assert_called_once()
+        call_kwargs = mock_openai.OpenAI.call_args[1]
+        assert call_kwargs["base_url"] == "http://localhost:11434/v1"
+        assert call_kwargs["api_key"] == "test-key"
 
 
 def test_build_llm_client_without_base_url_returns_anthropic_client():
     """When llm_base_url is not set in config, build_llm_client should return AnthropicClient."""
-    from timeopt.llm_client import build_llm_client
     with patch("timeopt.llm_client.anthropic") as mock_anthropic:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
@@ -73,6 +76,10 @@ def test_build_llm_client_without_base_url_returns_anthropic_client():
         }
         client = build_llm_client(config)
         assert isinstance(client, AnthropicClient)
+        # Verify anthropic.Anthropic was called with the expected api_key
+        mock_anthropic.Anthropic.assert_called_once()
+        call_kwargs = mock_anthropic.Anthropic.call_args[1]
+        assert call_kwargs["api_key"] == "test-key"
 
 
 def test_anthropic_client_env_var_fallback():
@@ -88,18 +95,20 @@ def test_anthropic_client_env_var_fallback():
 
 def test_build_llm_client_default_model_fallback():
     """When llm_model is not set in config, build_llm_client should fall back to default 'claude-sonnet-4-6'."""
-    from timeopt.llm_client import build_llm_client
     with patch("timeopt.llm_client.anthropic") as mock_anthropic:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
         config = {"llm_api_key": "test-key"}
         client = build_llm_client(config)
+        # Verify that the model parameter defaults to 'claude-sonnet-4-6' when not provided
+        assert mock_anthropic.Anthropic.called
+        call_kwargs = mock_anthropic.Anthropic.call_args[1]
+        # The AnthropicClient receives the model and stores it in _model
         assert client._model == "claude-sonnet-4-6"
 
 
 def test_build_llm_client_openai_default_model_fallback():
     """When llm_model is not set in config and llm_base_url is set, fall back to default 'claude-sonnet-4-6'."""
-    from timeopt.llm_client import build_llm_client
     with patch("timeopt.llm_client.openai") as mock_openai:
         mock_client = MagicMock()
         mock_openai.OpenAI.return_value = mock_client
@@ -108,12 +117,13 @@ def test_build_llm_client_openai_default_model_fallback():
             "llm_api_key": "test-key",
         }
         client = build_llm_client(config)
+        # Verify that the model parameter defaults to 'claude-sonnet-4-6' when not provided
+        assert mock_openai.OpenAI.called
         assert client._model == "claude-sonnet-4-6"
 
 
 def test_anthropic_client_complete_api_error_propagates():
     """When AnthropicClient.complete() calls API and it raises an exception, the exception should propagate."""
-    import pytest
     with patch("timeopt.llm_client.anthropic") as mock_anthropic:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
@@ -126,7 +136,6 @@ def test_anthropic_client_complete_api_error_propagates():
 
 def test_openai_compatible_client_complete_api_error_propagates():
     """When OpenAICompatibleClient.complete() calls API and it raises an exception, the exception should propagate."""
-    import pytest
     with patch("timeopt.llm_client.openai") as mock_openai:
         mock_client = MagicMock()
         mock_openai.OpenAI.return_value = mock_client
