@@ -1,4 +1,5 @@
 import sqlite3
+import uuid
 import pytest
 from timeopt.db import get_connection, create_schema, next_short_id
 
@@ -109,7 +110,6 @@ def test_invalid_priority_raises_integrity_error(conn):
             "urgent, category, created_at, status) VALUES "
             "('x', 1, '#1-t', 'test', 'test', 'invalid_priority', 0, 'work', '2026-01-01', 'pending')"
         )
-        conn.commit()
 
 
 def test_invalid_status_raises_integrity_error(conn):
@@ -120,7 +120,6 @@ def test_invalid_status_raises_integrity_error(conn):
             "urgent, category, created_at, status) VALUES "
             "('x', 1, '#1-t', 'test', 'test', 'high', 0, 'work', '2026-01-01', 'invalid_status')"
         )
-        conn.commit()
 
 
 def test_duplicate_short_id_for_pending_tasks_raises_integrity_error(conn):
@@ -140,7 +139,6 @@ def test_duplicate_short_id_for_pending_tasks_raises_integrity_error(conn):
             "urgent, category, created_at, status) VALUES "
             "('b', 1, '#1-second', 'second', 'second', 'high', 0, 'work', '2026-01-01', 'pending')"
         )
-        conn.commit()
 
 
 def test_duplicate_short_id_for_done_tasks_allowed(conn):
@@ -168,12 +166,9 @@ def test_duplicate_short_id_for_done_tasks_allowed(conn):
 
 def test_foreign_key_constraint_referencing_nonexistent_task(conn):
     """INSERT into calendar_blocks with non-existent task_id should raise IntegrityError (FK constraint)."""
-    import uuid
-
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO calendar_blocks(id, task_id, caldav_uid, scheduled_at, duration_min, plan_date) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (str(uuid.uuid4()), 'nonexistent-task-id', 'uid-1', '2026-01-01T09:00:00', 60, '2026-01-01'),
         )
-        conn.commit()
