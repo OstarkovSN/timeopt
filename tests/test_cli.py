@@ -220,9 +220,8 @@ def test_tasks_with_all_flag(runner, cli_env):
     # With --all: definitely shows done tasks
     result_all = runner.invoke(cli, ["tasks", "--all"])
     assert result_all.exit_code == 0
-    # When --all is used, done tasks should be listed (even if recently done)
-    # The output should still be valid (exit code 0)
-    assert result_all.exit_code == 0
+    # When --all is used, done tasks should be visible in output
+    assert "#1-fix-login-bug" in result_all.output
 
 
 def test_plan_invalid_date_format(runner, cli_env):

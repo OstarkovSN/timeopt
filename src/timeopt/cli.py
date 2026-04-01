@@ -77,8 +77,9 @@ def _print_tasks(tasks: list):
     """Print a list of task dicts grouped by status."""
     pending = [t for t in tasks if t["status"] == "pending"]
     delegated = [t for t in tasks if t["status"] == "delegated"]
+    done = [t for t in tasks if t["status"] == "done"]
 
-    if not pending and not delegated:
+    if not pending and not delegated and not done:
         click.echo("No tasks.")
         return
 
@@ -93,6 +94,13 @@ def _print_tasks(tasks: list):
         click.echo(f"Being handled by Claude ({len(delegated)})")
         for t in delegated:
             _print_task_line(t, show_notes=True)
+
+    if done:
+        if pending or delegated:
+            click.echo("")
+        click.echo(f"Done ({len(done)})")
+        for t in done:
+            _print_task_line(t)
 
 
 @click.group()
