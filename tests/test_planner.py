@@ -143,3 +143,61 @@ def test_save_returns_stored_uids(conn):
     blocks = get_calendar_blocks(conn, "2026-03-28")
     stored_uids = {b["caldav_uid"] for b in blocks}
     assert stored_uids == set(uids)
+
+
+# ---------------------------------------------------------------------------
+# Block 9: scheduling edge cases
+# ---------------------------------------------------------------------------
+
+def test_plan_proposal_zero_free_slots_all_deferred(conn):
+    """Filling the entire day with one event leaves no free slots; all tasks deferred."""
+    _seed_tasks(conn)  # 4 tasks
+    # One all-day event covering day_start (09:00) to day_end (18:00)
+    events = [{"start": "2026-03-28T09:00:00+00:00", "end": "2026-03-28T18:00:00+00:00",
+               "title": "all day event"}]
+    proposal = get_plan_proposal(conn, events=events, date="2026-03-28")
+    assert proposal["blocks"] == []
+    assert len(proposal["deferred"]) == 4
+
+
+def test_plan_proposal_effort_none_uses_default(conn):
+    """Task with effort=None falls back to default_effort config (medium=60 min)."""
+    # Seed a task with effort=None
+    t = TaskInput(title="no effort task", raw="no effort", priority="high",
+                  urgent=False, category="work", effort=None)
+    create_task(conn, t)
+    proposal = get_plan_proposal(conn, events=[], date="2026-03-28")
+    assert len(proposal["blocks"]) == 1
+    block = proposal["blocks"][0]
+    assert block["duration_min"] == 60  # default_effort is "medium" = 60 min
+
+
+def test_plan_proposal_events_before_day_start_dont_eat_slots(conn):
+    """Event before day_start should not carve into available slots."""
+    _seed_tasks(conn)
+    # Event from 07:00 to 08:30, before day_start (09:00)
+    events = [{"start": "2026-03-28T07:00:00+00:00", "end": "2026-03-28T08:30:00+00:00",
+               "title": "pre-dawn event"}]
+    proposal = get_plan_proposal(conn, events=events, date="2026-03-28")
+    # Day_start is 09:00; first block should start at or after 09:00
+    if len(proposal["blocks"]) > 0:
+        assert proposal["blocks"][0]["start"] >= "2026-03-28T09:00:00"
+
+
+def test_plan_proposal_overlapping_events_deduplicated(conn):
+    """Two overlapping events should be deduplicated; blocks don't schedule within overlap."""
+    _seed_tasks(conn)
+    # Two events that overlap: 10:00-11:00 and 10:30-11:30 → combined busy: 10:00-11:30
+    events = [
+        {"start": "2026-03-28T10:00:00+00:00", "end": "2026-03-28T11:00:00+00:00", "title": "event 1"},
+        {"start": "2026-03-28T10:30:00+00:00", "end": "2026-03-28T11:30:00+00:00", "title": "event 2"},
+    ]
+    proposal = get_plan_proposal(conn, events=events, date="2026-03-28")
+    # Verify no blocks are scheduled during 10:00-11:30
+    for block in proposal["blocks"]:
+        block_start = datetime.fromisoformat(block["start"])
+        block_end = block_start + timedelta(minutes=block["duration_min"])
+        busy_start = datetime.fromisoformat("2026-03-28T10:00:00+00:00")
+        busy_end = datetime.fromisoformat("2026-03-28T11:30:00+00:00")
+        # Block must not overlap [busy_start, busy_end]
+        assert not (block_start < busy_end and block_end > busy_start)

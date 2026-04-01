@@ -600,3 +600,39 @@ def test_get_config_unknown_key_uses_key_error_not_value_error(server_env):
     result = get_config(key="unknown_key_abc123")
     assert isinstance(result, dict)
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Block 8: fuzzy_match_tasks edge cases
+# ---------------------------------------------------------------------------
+
+def test_fuzzy_match_empty_db(server_env):
+    """Empty DB returns empty candidates list."""
+    from timeopt.server import fuzzy_match_tasks
+    result = fuzzy_match_tasks(query="anything")
+    assert result["candidates"] == []
+
+
+def test_fuzzy_match_all_tasks_done(server_env):
+    """All done tasks returns empty candidates (only searches pending/delegated)."""
+    from timeopt.server import dump_task, mark_done, fuzzy_match_tasks
+    dumped = dump_task(task={"raw": "fix login", "title": "fix login",
+                             "priority": "high", "urgent": False,
+                             "category": "work", "effort": "small"})
+    mark_done(task_ids=[dumped["id"]])
+    result = fuzzy_match_tasks(query="fix")
+    assert result["candidates"] == []
+
+
+def test_fuzzy_match_very_short_query(server_env):
+    """Very short query (single character) still returns list (may have results)."""
+    from timeopt.server import dump_task, fuzzy_match_tasks
+    dump_task(task={"raw": "fix login", "title": "fix login",
+                    "priority": "high", "urgent": False,
+                    "category": "work", "effort": "small"})
+    dump_task(task={"raw": "apply patch", "title": "apply patch",
+                    "priority": "medium", "urgent": False,
+                    "category": "work", "effort": "medium"})
+    # Single character query should not raise
+    result = fuzzy_match_tasks(query="a")
+    assert isinstance(result["candidates"], list)
