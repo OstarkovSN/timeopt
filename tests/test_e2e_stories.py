@@ -180,3 +180,54 @@ async def test_story_daily_plan(tmp_path):
             q1_idx = next(i for i, b in enumerate(blocks) if b["quadrant"] == "Q1")
             q2_idx = next(i for i, b in enumerate(blocks) if b["quadrant"] == "Q2")
             assert q1_idx < q2_idx
+
+
+@pytest.mark.e2e
+async def test_story_delegation_lifecycle(tmp_path):
+    """Delegation story (failure path): Q3 task → delegated → progress note → returned to pending with notes."""
+    params = _server_params(str(tmp_path / "e2e.db"))
+    async with stdio_client(params) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+
+            # Step 1 — dump a Q3 task (urgent + low priority)
+            dumped = _call(await session.call_tool("dump_task", {"task": {
+                "title": "reply to accountant",
+                "priority": "low",
+                "urgent": True,
+                "category": "work",
+                "effort": "small",
+            }}))
+            task_uuid = dumped["id"]
+
+            # Step 2 — classify_tasks identifies it as Q3
+            classified = _call(await session.call_tool("classify_tasks", {}))
+            quadrants = {t["task_id"]: t["quadrant"] for t in classified["tasks"]}
+            assert quadrants[task_uuid] == "Q3"
+
+            # Step 3 — main Claude delegates it
+            assert _call(await session.call_tool("mark_delegated", {"task_id": task_uuid})) == {"ok": True}
+            listed = _call(await session.call_tool("list_tasks", {}))
+            task_entry = next(t for t in listed["tasks"] if t["title"] == "reply to accountant")
+            assert task_entry["status"] == "delegated"
+
+            # Step 4 — Delegation Executor writes a progress note
+            assert _call(await session.call_tool("update_task_notes", {
+                "task_id": task_uuid,
+                "notes": "Attempting to send email via mail tool",
+            })) == {"ok": True}
+
+            # Step 5 — Executor fails and returns task to pending
+            assert _call(await session.call_tool("return_to_pending", {
+                "task_id": task_uuid,
+                "notes": "No email tool available",
+            })) == {"ok": True}
+
+            # Step 6 — task is back in pending with both notes visible
+            pending = _call(await session.call_tool("list_tasks", {"status": "pending"}))
+            assert any(t["title"] == "reply to accountant" for t in pending["tasks"])
+
+            detail = _call(await session.call_tool("get_task", {"task_id": task_uuid}))
+            assert detail["status"] == "pending"
+            assert "Attempting to send email via mail tool" in detail["notes"]
+            assert "No email tool available" in detail["notes"]
