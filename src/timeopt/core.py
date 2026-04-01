@@ -267,13 +267,25 @@ def list_tasks(
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     fields = ", ".join(_DISPLAY_FIELDS)
+    # Sort by Eisenhower quadrant: Q1 (urgent+important) first, then Q2, Q3, Q4.
+    # important = priority IN ('high','medium')
+    eisenhower_order = (
+        "CASE "
+        "WHEN urgent=1 AND priority IN ('high','medium') THEN 1 "
+        "WHEN urgent=0 AND priority IN ('high','medium') THEN 2 "
+        "WHEN urgent=1 AND priority NOT IN ('high','medium') THEN 3 "
+        "ELSE 4 END"
+    )
     rows = conn.execute(
-        f"SELECT {fields} FROM tasks {where} ORDER BY rowid", params
+        f"SELECT {fields} FROM tasks {where} ORDER BY {eisenhower_order}, rowid",
+        params,
     ).fetchall()
 
     result = []
     for row in rows:
         d = dict(zip(_DISPLAY_FIELDS, row))
+        if "urgent" in d:
+            d["urgent"] = bool(d["urgent"])
         if d.get("notes"):
             d["notes"] = d["notes"][-60:]
         result.append(d)
