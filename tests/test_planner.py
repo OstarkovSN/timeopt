@@ -180,19 +180,30 @@ def test_plan_proposal_events_before_day_start_dont_eat_slots(conn):
                "title": "pre-dawn event"}]
     proposal = get_plan_proposal(conn, events=events, date="2026-03-28")
     # Day_start is 09:00; first block should start at or after 09:00
-    if len(proposal["blocks"]) > 0:
-        assert proposal["blocks"][0]["start"] >= "2026-03-28T09:00:00"
+    assert len(proposal["blocks"]) > 0
+    first_start = datetime.fromisoformat(proposal["blocks"][0]["start"])
+    day_start = datetime(2026, 3, 28, 9, 0, 0, tzinfo=timezone.utc)
+    assert first_start >= day_start
 
 
 def test_plan_proposal_overlapping_events_deduplicated(conn):
-    """Two overlapping events should be deduplicated; blocks don't schedule within overlap."""
+    """Two overlapping events should be deduplicated; blocks don't schedule within overlap.
+
+    Tests that cursor = max(cursor, e) correctly deduplicates a contained event pair.
+    Outer event: 10:00-11:30. Inner event: 10:15-11:00.
+    With proper max() logic: after outer, cursor=11:30. Processing inner, max(11:30, 11:00)=11:30.
+    With naive cursor=e: cursor would regress to 11:00, creating a phantom slot 11:00-11:30.
+    """
     _seed_tasks(conn)
-    # Two events that overlap: 10:00-11:00 and 10:30-11:30 → combined busy: 10:00-11:30
+    # Two events where one is contained within the other
+    # Outer: 10:00-11:30, Inner: 10:15-11:00 → combined busy: 10:00-11:30
     events = [
-        {"start": "2026-03-28T10:00:00+00:00", "end": "2026-03-28T11:00:00+00:00", "title": "event 1"},
-        {"start": "2026-03-28T10:30:00+00:00", "end": "2026-03-28T11:30:00+00:00", "title": "event 2"},
+        {"start": "2026-03-28T10:00:00+00:00", "end": "2026-03-28T11:30:00+00:00", "title": "outer event"},
+        {"start": "2026-03-28T10:15:00+00:00", "end": "2026-03-28T11:00:00+00:00", "title": "inner event"},
     ]
     proposal = get_plan_proposal(conn, events=events, date="2026-03-28")
+    # Blocks should exist (they're deferred if they conflict, not removed)
+    assert len(proposal["blocks"]) > 0
     # Verify no blocks are scheduled during 10:00-11:30
     for block in proposal["blocks"]:
         block_start = datetime.fromisoformat(block["start"])
