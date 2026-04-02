@@ -22,12 +22,17 @@ _CONFIG_DEFAULTS: dict[str, str] = {
     "fuzzy_match_min_score": "80",
     "fuzzy_match_ask_gap": "10",
     "delegation_max_tool_calls": "10",
+    "caldav_url": "https://caldav.yandex.ru",
+    "caldav_read_calendars": "all",
+    "caldav_tasks_calendar": "Timeopt",
+    "llm_max_tokens": "4096",
+    "calendar_fuzzy_min_score": "50",
+    "ui_port": "7749",
 }
 
 # Optional keys — no default, return None if unset
 _CONFIG_OPTIONAL: frozenset[str] = frozenset({
-    "caldav_url", "caldav_username", "caldav_password",
-    "caldav_read_calendars", "caldav_tasks_calendar",
+    "caldav_username", "caldav_password",
     "llm_base_url", "llm_api_key", "llm_model",
 })
 

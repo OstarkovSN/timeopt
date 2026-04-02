@@ -13,6 +13,12 @@ DEFAULTS = {
     "fuzzy_match_min_score": "80",
     "fuzzy_match_ask_gap": "10",
     "delegation_max_tool_calls": "10",
+    "caldav_url": "https://caldav.yandex.ru",
+    "caldav_read_calendars": "all",
+    "caldav_tasks_calendar": "Timeopt",
+    "llm_max_tokens": "4096",
+    "calendar_fuzzy_min_score": "50",
+    "ui_port": "7749",
 }
 
 
@@ -256,3 +262,12 @@ def test_fuzzy_match_returns_sorted_by_score(conn):
     matches = fuzzy_match_tasks(conn, "fix login")
     assert len(matches) >= 2
     assert matches[0]["score"] >= matches[1]["score"]
+
+
+def test_new_config_defaults(conn):
+    assert get_config(conn, "caldav_url") == "https://caldav.yandex.ru"
+    assert get_config(conn, "caldav_read_calendars") == "all"
+    assert get_config(conn, "caldav_tasks_calendar") == "Timeopt"
+    assert get_config(conn, "llm_max_tokens") == "4096"
+    assert get_config(conn, "calendar_fuzzy_min_score") == "50"
+    assert get_config(conn, "ui_port") == "7749"
