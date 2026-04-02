@@ -318,3 +318,36 @@ def test_setup_scheduling_defaults(runner, cli_env):
     assert core.get_config(conn, "day_start") == "08:00"
     assert core.get_config(conn, "day_end") == "17:00"
     conn.close()
+
+
+def test_ui_command_starts_uvicorn(runner, cli_env):
+    """timeopt ui starts uvicorn and opens browser."""
+    from timeopt.cli import cli
+    from unittest.mock import patch
+    with patch("uvicorn.run") as mock_uvicorn, \
+         patch("webbrowser.open") as mock_browser:
+        result = runner.invoke(cli, ["ui"])
+        assert result.exit_code == 0
+        mock_uvicorn.assert_called_once()
+        call_args = mock_uvicorn.call_args
+        assert "timeopt.ui_server:app" in call_args[0]
+        mock_browser.assert_called_once()
+        assert "7749" in mock_browser.call_args[0][0]
+
+
+def test_ui_command_respects_ui_port_config(runner, cli_env):
+    """timeopt ui reads ui_port from config."""
+    from timeopt.cli import cli
+    from timeopt import db, core
+    from unittest.mock import patch
+    conn = db.get_connection(cli_env)
+    core.set_config(conn, "ui_port", "9000")
+    conn.close()
+
+    with patch("uvicorn.run") as mock_uvicorn, \
+         patch("webbrowser.open") as mock_browser:
+        result = runner.invoke(cli, ["ui"])
+        assert result.exit_code == 0
+        call_kwargs = mock_uvicorn.call_args[1]
+        assert call_kwargs["port"] == 9000
+        assert "9000" in mock_browser.call_args[0][0]

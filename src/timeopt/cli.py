@@ -464,3 +464,21 @@ def sync():
             click.echo("Run '/sync' in Claude Code to resolve these interactively.")
     finally:
         conn.close()
+
+
+@cli.command()
+def ui():
+    """Start the timeopt web UI and open it in a browser."""
+    import webbrowser
+    import uvicorn
+
+    conn = _open_conn()
+    try:
+        port = int(core.get_config(conn, "ui_port") or "7749")
+    finally:
+        conn.close()
+
+    url = f"http://127.0.0.1:{port}"
+    click.echo(f"Starting timeopt UI at {url}  (Ctrl+C to stop)")
+    webbrowser.open(url)
+    uvicorn.run("timeopt.ui_server:app", host="127.0.0.1", port=port)
