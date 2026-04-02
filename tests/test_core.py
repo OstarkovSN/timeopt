@@ -271,3 +271,60 @@ def test_new_config_defaults(conn):
     assert get_config(conn, "llm_max_tokens") == "4096"
     assert get_config(conn, "calendar_fuzzy_min_score") == "50"
     assert get_config(conn, "ui_port") == "7749"
+
+
+def test_list_tasks_filter_by_priority(conn):
+    """Test that list_tasks priority filter returns only matching priority tasks."""
+    _make_task(conn, title="high priority task", priority="high")
+    _make_task(conn, title="medium priority task", priority="medium")
+    _make_task(conn, title="low priority task", priority="low")
+
+    high_priority_tasks = list_tasks(conn, priority="high")
+    assert len(high_priority_tasks) == 1
+    assert high_priority_tasks[0]["title"] == "high priority task"
+    assert high_priority_tasks[0]["priority"] == "high"
+
+    low_priority_tasks = list_tasks(conn, priority="low")
+    assert len(low_priority_tasks) == 1
+    assert low_priority_tasks[0]["title"] == "low priority task"
+    assert low_priority_tasks[0]["priority"] == "low"
+
+
+def test_list_tasks_filter_by_category(conn):
+    """Test that list_tasks category filter returns only matching category tasks."""
+    _make_task(conn, title="work task", category="work")
+    _make_task(conn, title="personal task", category="personal")
+    _make_task(conn, title="errands task", category="errands")
+
+    work_tasks = list_tasks(conn, category="work")
+    assert len(work_tasks) == 1
+    assert work_tasks[0]["title"] == "work task"
+    assert work_tasks[0]["category"] == "work"
+
+    personal_tasks = list_tasks(conn, category="personal")
+    assert len(personal_tasks) == 1
+    assert personal_tasks[0]["title"] == "personal task"
+    assert personal_tasks[0]["category"] == "personal"
+
+
+def test_list_tasks_filter_by_priority_and_category(conn):
+    """Test that list_tasks with both priority and category filters returns matching task only."""
+    # Create a 2x2 matrix: high/work, high/personal, low/work, low/personal
+    _make_task(conn, title="high work", priority="high", category="work")
+    _make_task(conn, title="high personal", priority="high", category="personal")
+    _make_task(conn, title="low work", priority="low", category="work")
+    _make_task(conn, title="low personal", priority="low", category="personal")
+
+    # Filter for high priority + work category
+    filtered = list_tasks(conn, priority="high", category="work")
+    assert len(filtered) == 1
+    assert filtered[0]["title"] == "high work"
+    assert filtered[0]["priority"] == "high"
+    assert filtered[0]["category"] == "work"
+
+    # Filter for low priority + personal category
+    filtered = list_tasks(conn, priority="low", category="personal")
+    assert len(filtered) == 1
+    assert filtered[0]["title"] == "low personal"
+    assert filtered[0]["priority"] == "low"
+    assert filtered[0]["category"] == "personal"
