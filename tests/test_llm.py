@@ -148,3 +148,32 @@ def test_openai_compatible_client_complete_api_error_propagates():
         )
         with pytest.raises(RuntimeError, match="API error"):
             client.complete(system="sys", user="user msg")
+
+
+def test_anthropic_client_passes_max_tokens():
+    """AnthropicClient.complete() uses max_tokens from __init__."""
+    with patch("timeopt.llm_client.anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text="ok")]
+        )
+        client = AnthropicClient(api_key="test-key", model="claude-sonnet-4-6", max_tokens=1024)
+        client.complete(system="sys", user="user")
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["max_tokens"] == 1024
+
+
+def test_build_llm_client_passes_max_tokens_to_anthropic():
+    """build_llm_client reads llm_max_tokens from config and passes to AnthropicClient."""
+    with patch("timeopt.llm_client.anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text="ok")]
+        )
+        config = {"llm_api_key": "test-key", "llm_model": "claude-sonnet-4-6", "llm_max_tokens": "2048"}
+        client = build_llm_client(config)
+        client.complete(system="s", user="u")
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["max_tokens"] == 2048
