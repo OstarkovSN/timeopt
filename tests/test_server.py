@@ -656,3 +656,43 @@ def test_get_caldav_uses_config_defaults(server_env):
         c.close()
         call_kwargs = mock_cls.call_args[1]
         assert call_kwargs["url"] == "https://custom.caldav.example.com"
+
+
+def test_resolve_calendar_reference_with_date_range(mock_caldav):
+    """Passing date_range dict with start/end verifies get_events is called and match is returned."""
+    from timeopt.server import resolve_calendar_reference
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-team-sync", title="Team sync",
+                      start="2026-04-05T09:00:00Z",
+                      end="2026-04-05T10:00:00Z"),
+    ]
+    result = resolve_calendar_reference(
+        label="team sync",
+        date_range={"start": "2026-04-01", "end": "2026-04-10"}
+    )
+    # Verify get_events was called
+    mock_caldav.get_events.assert_called_once()
+    # Verify result contains the matched event
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["uid"] == "uid-team-sync"
+    assert result["candidates"][0]["score"] > 50
+
+
+def test_resolve_calendar_reference_date_range_sets_window(mock_caldav):
+    """Verify that date_range start/end correctly sets get_events call parameters."""
+    from timeopt.server import resolve_calendar_reference
+    mock_caldav.get_events.return_value = []
+
+    # Call with start="2026-04-01", end="2026-04-11" (10 days apart)
+    resolve_calendar_reference(
+        label="some event",
+        date_range={"start": "2026-04-01", "end": "2026-04-11"}
+    )
+
+    # Verify get_events was called with correct start date and days parameter
+    call_args = mock_caldav.get_events.call_args
+    assert call_args is not None
+    # First positional arg should be the start date in ISO format
+    assert call_args[0][0] == "2026-04-01"
+    # days keyword arg should be (end - start).days = 10
+    assert call_args[1]["days"] == 10
