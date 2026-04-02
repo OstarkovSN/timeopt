@@ -40,7 +40,7 @@ async def config_page(request: Request):
     try:
         cfg = core.get_all_config(conn)
         return templates.TemplateResponse(
-            "config.html", {"request": request, "config": cfg}
+            request, "config.html", {"config": cfg}
         )
     finally:
         conn.close()
@@ -52,7 +52,7 @@ async def config_partial(request: Request):
     try:
         cfg = core.get_all_config(conn)
         return templates.TemplateResponse(
-            "partials/config.html", {"request": request, "config": cfg}
+            request, "partials/config.html", {"config": cfg}
         )
     finally:
         conn.close()
@@ -65,16 +65,13 @@ async def set_config_field(request: Request, key: str, value: str = Form("")):
         try:
             core.set_config(conn, key, value)
             return templates.TemplateResponse(
-                "partials/config_field.html",
-                {"request": request, "key": key, "value": value, "status": "saved"},
+                request, "partials/config_field.html",
+                {"key": key, "value": value, "status": "saved"},
             )
         except KeyError as e:
             return templates.TemplateResponse(
-                "partials/config_field.html",
-                {
-                    "request": request, "key": key, "value": value,
-                    "status": "error", "error": str(e),
-                },
+                request, "partials/config_field.html",
+                {"key": key, "value": value, "status": "error", "error": str(e)},
             )
     finally:
         conn.close()

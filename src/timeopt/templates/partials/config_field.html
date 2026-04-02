@@ -1,0 +1,18 @@
+<div id="field-{{ key }}" class="field-row">
+  <label class="field-label">{{ key }}</label>
+  <input
+    class="field-input"
+    name="value"
+    value="{{ value if value is not none else '' }}"
+    type="{{ 'password' if 'password' in key or key == 'llm_api_key' else 'text' }}"
+    hx-post="/api/config/{{ key }}"
+    hx-target="#field-{{ key }}"
+    hx-trigger="change"
+    hx-include="this"
+  />
+  <span class="field-status {% if status is defined %}{{ status }}{% endif %}">
+    {%- if status is defined and status == 'saved' %}✓ saved
+    {%- elif status is defined and status == 'error' %}✗ {{ error }}
+    {%- endif -%}
+  </span>
+</div>

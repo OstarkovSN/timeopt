@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>timeopt</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { display: flex; font-family: system-ui, -apple-system, sans-serif; height: 100vh; background: #f8f9fa; }
+    .sidebar {
+      width: 200px; background: #1a1a2e; color: #eee;
+      padding: 1.5rem 1rem; flex-shrink: 0; display: flex; flex-direction: column;
+    }
+    .sidebar h1 { font-size: 1.1rem; font-weight: 700; margin-bottom: 2rem; color: #7c83fd; letter-spacing: 0.02em; }
+    .sidebar nav a {
+      display: block; padding: 0.5rem 0.75rem; color: #aaa;
+      text-decoration: none; border-radius: 4px; margin-bottom: 0.25rem;
+      cursor: pointer; font-size: 0.875rem; transition: background 0.15s, color 0.15s;
+    }
+    .sidebar nav a:hover { background: #2a2a4e; color: #fff; }
+    .sidebar nav a.active { background: #2a2a4e; color: #fff; }
+    #content { flex: 1; overflow-y: auto; padding: 2rem 2.5rem; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h1>timeopt</h1>
+    <nav>
+      <a hx-get="/partials/config"
+         hx-target="#content"
+         hx-push-url="/config"
+         class="{% block nav_config_active %}{% endblock %}">Config</a>
+    </nav>
+  </div>
+  <div id="content">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>
