@@ -35,11 +35,11 @@ def _parse_date(date_str: Optional[str]) -> _date_type:
 
 
 def _get_caldav(conn) -> Optional[CalDAVClient]:
-    url = core.get_config(conn, "caldav_url") or "https://caldav.yandex.ru"
+    url = core.get_config(conn, "caldav_url")
     username = core.get_config(conn, "caldav_username")
     password = core.get_config(conn, "caldav_password")
-    read_cals = core.get_config(conn, "caldav_read_calendars") or "all"
-    tasks_cal = core.get_config(conn, "caldav_tasks_calendar") or "Timeopt"
+    read_cals = core.get_config(conn, "caldav_read_calendars")
+    tasks_cal = core.get_config(conn, "caldav_tasks_calendar")
     if not username or not password:
         return None
     return CalDAVClient(
@@ -226,8 +226,7 @@ def get_dump_templates(fragments: list) -> dict:
         events = []
         if caldav:
             try:
-                events_raw = caldav.get_events(_date_type.today().isoformat(), days=30)
-                events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
+                events = caldav.get_events(_date_type.today().isoformat(), days=30)
             except Exception:
                 logger.exception("get_dump_templates: CalDAV unavailable, skipping event detection")
         return core.get_dump_templates(fragments, events)
@@ -271,8 +270,7 @@ def resolve_calendar_reference(label: str, date_range: Optional[dict] = None) ->
                 end_date = _datetime.fromisoformat(date_range["end"]).date()
                 days = max(1, (end_date - start_date).days)
         events_raw = caldav.get_events(start_date.isoformat(), days=days)
-        events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-        match = core.resolve_calendar_reference(label, events)
+        match = core.resolve_calendar_reference(label, events_raw)
         return {"candidates": [match] if match else []}
     finally:
         conn.close()
@@ -356,9 +354,8 @@ def sync_calendar(date_range_days: int = 30) -> dict:
         if not caldav:
             return {"ok": False, "error": "CalDAV not configured"}
         events_raw = caldav.get_events(_date_type.today().isoformat(), days=date_range_days)
-        events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-        updated = core.sync_bound_tasks(conn, events)
-        resolved = core.try_resolve_unresolved(conn, events)
+        updated = core.sync_bound_tasks(conn, events_raw)
+        resolved = core.try_resolve_unresolved(conn, events_raw)
         still_unresolved = core.get_unresolved_tasks(conn)
         return {
             "ok": True,

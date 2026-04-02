@@ -39,11 +39,11 @@ def _get_llm_client(conn):
 
 def _get_caldav_client(conn):
     from timeopt.caldav_client import CalDAVClient
-    url = core.get_config(conn, "caldav_url") or "https://caldav.yandex.ru"
+    url = core.get_config(conn, "caldav_url")
     username = core.get_config(conn, "caldav_username")
     password = core.get_config(conn, "caldav_password")
-    read_cals = core.get_config(conn, "caldav_read_calendars") or "all"
-    tasks_cal = core.get_config(conn, "caldav_tasks_calendar") or "Timeopt"
+    read_cals = core.get_config(conn, "caldav_read_calendars")
+    tasks_cal = core.get_config(conn, "caldav_tasks_calendar")
     if not username or not password:
         return None
     return CalDAVClient(url=url, username=username, password=password,

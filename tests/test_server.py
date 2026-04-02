@@ -636,3 +636,23 @@ def test_fuzzy_match_very_short_query(server_env):
     # Single character query should not raise
     result = fuzzy_match_tasks(query="a")
     assert isinstance(result["candidates"], list)
+
+
+def test_get_caldav_uses_config_defaults(server_env):
+    """_get_caldav() reads url/calendars from config, not inline fallbacks."""
+    from unittest.mock import patch, MagicMock
+    from timeopt import db, core
+    conn = db.get_connection(server_env)
+    core.set_config(conn, "caldav_url", "https://custom.caldav.example.com")
+    core.set_config(conn, "caldav_username", "user")
+    core.set_config(conn, "caldav_password", "pass")
+    conn.close()
+
+    with patch("timeopt.server.CalDAVClient") as mock_cls:
+        mock_cls.return_value = MagicMock()
+        from timeopt.server import _get_caldav, _open_conn
+        c = _open_conn()
+        _get_caldav(c)
+        c.close()
+        call_kwargs = mock_cls.call_args[1]
+        assert call_kwargs["url"] == "https://custom.caldav.example.com"
