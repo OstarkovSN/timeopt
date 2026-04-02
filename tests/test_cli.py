@@ -265,3 +265,56 @@ def test_done_all_queries_no_match_exits_zero(runner, cli_env):
     result = runner.invoke(cli, ["done", "xyzzy nonexistent 1", "qqqq nonexistent 2"])
     assert result.exit_code == 0
     assert "No confident match" in result.output
+
+
+def test_setup_skips_all(runner, cli_env):
+    """Choosing skip for all sections runs without error."""
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["setup"], input="4\nn\nn\nn\n")
+    assert result.exit_code == 0
+    assert "Setup complete" in result.output
+
+
+def test_setup_anthropic_saves_config(runner, cli_env):
+    """Choosing Anthropic saves llm_api_key and llm_model."""
+    from timeopt.cli import cli
+    from timeopt import db, core
+    result = runner.invoke(
+        cli, ["setup"],
+        input="1\nsk-test-key\nclaude-sonnet-4-6\nn\nn\nn\n"
+    )
+    assert result.exit_code == 0
+    conn = db.get_connection(cli_env)
+    assert core.get_config(conn, "llm_api_key") == "sk-test-key"
+    assert core.get_config(conn, "llm_model") == "claude-sonnet-4-6"
+    conn.close()
+
+
+def test_setup_openai_sets_base_url(runner, cli_env):
+    """Choosing OpenAI sets llm_base_url to OpenAI's API."""
+    from timeopt.cli import cli
+    from timeopt import db, core
+    result = runner.invoke(
+        cli, ["setup"],
+        input="2\nsk-openai-key\ngpt-4o\nn\nn\nn\n"
+    )
+    assert result.exit_code == 0
+    conn = db.get_connection(cli_env)
+    assert core.get_config(conn, "llm_base_url") == "https://api.openai.com/v1"
+    assert core.get_config(conn, "llm_api_key") == "sk-openai-key"
+    conn.close()
+
+
+def test_setup_scheduling_defaults(runner, cli_env):
+    """Customizing scheduling saves day_start and day_end."""
+    from timeopt.cli import cli
+    from timeopt import db, core
+    result = runner.invoke(
+        cli, ["setup"],
+        input="4\nn\ny\n08:00\n17:00\n10\nsmall\nn\n"
+    )
+    assert result.exit_code == 0
+    conn = db.get_connection(cli_env)
+    assert core.get_config(conn, "day_start") == "08:00"
+    assert core.get_config(conn, "day_end") == "17:00"
+    conn.close()

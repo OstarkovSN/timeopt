@@ -197,6 +197,88 @@ def config_set(key, value):
 
 
 @cli.command()
+def setup():
+    """Interactive setup wizard. Configures LLM, CalDAV, and scheduling defaults."""
+    conn = _open_conn()
+    try:
+        cfg = core.get_all_config(conn)
+
+        llm_ok = bool(cfg.get("llm_api_key"))
+        caldav_ok = bool(cfg.get("caldav_username") and cfg.get("caldav_password"))
+        click.echo("Current state:")
+        click.echo(f"  LLM:    {'configured' if llm_ok else 'not set'}")
+        click.echo(f"  CalDAV: {'configured' if caldav_ok else 'not set'}")
+        click.echo("")
+
+        # Step 1: LLM provider
+        click.echo("LLM provider:")
+        click.echo("  1. Anthropic")
+        click.echo("  2. OpenAI")
+        click.echo("  3. Custom (OpenAI-compatible)")
+        click.echo("  4. Skip")
+        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4"]), default="4")
+
+        if choice == "1":
+            api_key = click.prompt("Anthropic API key",
+                                   default=cfg.get("llm_api_key") or "", hide_input=True)
+            model = click.prompt("Model", default=cfg.get("llm_model") or "claude-sonnet-4-6")
+            core.set_config(conn, "llm_api_key", api_key)
+            core.set_config(conn, "llm_model", model)
+        elif choice == "2":
+            api_key = click.prompt("OpenAI API key",
+                                   default=cfg.get("llm_api_key") or "", hide_input=True)
+            model = click.prompt("Model", default=cfg.get("llm_model") or "gpt-4o")
+            core.set_config(conn, "llm_base_url", "https://api.openai.com/v1")
+            core.set_config(conn, "llm_api_key", api_key)
+            core.set_config(conn, "llm_model", model)
+        elif choice == "3":
+            base_url = click.prompt("Base URL", default=cfg.get("llm_base_url") or "")
+            api_key = click.prompt("API key",
+                                   default=cfg.get("llm_api_key") or "", hide_input=True)
+            model = click.prompt("Model", default=cfg.get("llm_model") or "")
+            core.set_config(conn, "llm_base_url", base_url)
+            core.set_config(conn, "llm_api_key", api_key)
+            core.set_config(conn, "llm_model", model)
+
+        # Step 2: CalDAV
+        if click.confirm("\nConfigure CalDAV (Yandex Calendar or any CalDAV server)?", default=False):
+            url = click.prompt("CalDAV URL",
+                               default=cfg.get("caldav_url") or "https://caldav.yandex.ru")
+            username = click.prompt("Username", default=cfg.get("caldav_username") or "")
+            password = click.prompt("Password",
+                                    default=cfg.get("caldav_password") or "", hide_input=True)
+            core.set_config(conn, "caldav_url", url)
+            core.set_config(conn, "caldav_username", username)
+            core.set_config(conn, "caldav_password", password)
+
+        # Step 3: Scheduling defaults
+        if click.confirm("\nCustomize scheduling defaults?", default=False):
+            day_start = click.prompt("Day start (HH:MM)",
+                                     default=cfg.get("day_start") or "09:00")
+            day_end = click.prompt("Day end (HH:MM)",
+                                   default=cfg.get("day_end") or "18:00")
+            break_min = click.prompt("Break between tasks (minutes)",
+                                     default=cfg.get("break_duration_min") or "15")
+            default_effort = click.prompt(
+                "Default effort",
+                default=cfg.get("default_effort") or "medium",
+                type=click.Choice(["small", "medium", "large"]),
+            )
+            core.set_config(conn, "day_start", day_start)
+            core.set_config(conn, "day_end", day_end)
+            core.set_config(conn, "break_duration_min", break_min)
+            core.set_config(conn, "default_effort", default_effort)
+
+        # Step 4: Web UI
+        if click.confirm("\nOpen web UI?", default=False):
+            click.echo("Run: timeopt ui")
+
+        click.echo("\nSetup complete.")
+    finally:
+        conn.close()
+
+
+@cli.command()
 @click.argument("queries", nargs=-1, required=True)
 def done(queries):
     """Mark tasks as done by fuzzy match. Accepts partial names."""
