@@ -335,6 +335,78 @@ def test_ui_command_starts_uvicorn(runner, cli_env):
         assert "7749" in mock_browser.call_args[0][0]
 
 
+def test_sync_command_with_caldav(runner, cli_env):
+    """sync command with CalDAV mocked shows no-change message."""
+    from timeopt.cli import cli
+    from unittest.mock import MagicMock
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["sync"])
+    assert result.exit_code == 0
+    assert "No due date changes" in result.output
+
+
+def test_plan_command_shows_schedule(runner, cli_env):
+    """plan command displays scheduled blocks when tasks exist."""
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "write tests", "raw": "write tests",
+                    "priority": "high", "urgent": True, "category": "work", "effort": "small"})
+
+    with patch("timeopt.cli._get_caldav_client", return_value=None):
+        result = runner.invoke(cli, ["plan", "--date", "2026-04-10"])
+    assert result.exit_code == 0
+    assert "#1-write-tests" in result.output
+
+
+def test_plan_command_push_confirmation(runner, cli_env):
+    """plan command prompts to push when CalDAV is configured."""
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "push me", "raw": "push me",
+                    "priority": "high", "urgent": True, "category": "work", "effort": "small"})
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav), \
+         patch("timeopt.planner.push_calendar_blocks"):
+        result = runner.invoke(cli, ["plan", "--date", "2026-04-10"], input="n\n")
+    assert result.exit_code == 0
+    assert "Push to calendar?" in result.output
+
+
+def test_setup_custom_provider_saves_config(runner, cli_env):
+    """Choosing Custom provider saves llm_base_url, llm_api_key, llm_model."""
+    from timeopt.cli import cli
+    result = runner.invoke(
+        cli, ["setup"],
+        input="3\nhttps://my-llm.example.com/v1\nmy-api-key\nmy-model\nn\nn\nn\n"
+    )
+    assert result.exit_code == 0
+    conn = db.get_connection(cli_env)
+    assert core.get_config(conn, "llm_base_url") == "https://my-llm.example.com/v1"
+    assert core.get_config(conn, "llm_api_key") == "my-api-key"
+    assert core.get_config(conn, "llm_model") == "my-model"
+    conn.close()
+
+
+def test_setup_caldav_saves_config(runner, cli_env):
+    """Configuring CalDAV in setup saves url, username, password."""
+    from timeopt.cli import cli
+    result = runner.invoke(
+        cli, ["setup"],
+        input="4\ny\nhttps://caldav.example.com\nmyuser\nmypassword\nn\nn\n"
+    )
+    assert result.exit_code == 0
+    conn = db.get_connection(cli_env)
+    assert core.get_config(conn, "caldav_url") == "https://caldav.example.com"
+    assert core.get_config(conn, "caldav_username") == "myuser"
+    assert core.get_config(conn, "caldav_password") == "mypassword"
+    conn.close()
+
+
 def test_ui_command_respects_ui_port_config(runner, cli_env):
     """timeopt ui reads ui_port from config."""
     from timeopt.cli import cli
