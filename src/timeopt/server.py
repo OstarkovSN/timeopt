@@ -270,7 +270,8 @@ def resolve_calendar_reference(label: str, date_range: Optional[dict] = None) ->
                 end_date = _datetime.fromisoformat(date_range["end"]).date()
                 days = max(1, (end_date - start_date).days)
         events_raw = caldav.get_events(start_date.isoformat(), days=days)
-        match = core.resolve_calendar_reference(label, events_raw)
+        min_score = int(core.get_config(conn, "calendar_fuzzy_min_score"))
+        match = core.resolve_calendar_reference(label, events_raw, min_score=min_score)
         return {"candidates": [match] if match else []}
     finally:
         conn.close()

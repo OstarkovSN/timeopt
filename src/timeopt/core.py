@@ -383,6 +383,7 @@ def _extract_event_label(fragment: str) -> str | None:
 def resolve_calendar_reference(
     label: str,
     events: list,
+    min_score: int = 50,
 ) -> dict | None:
     """
     Fuzzy-match a textual event label against a list of CalendarEvent objects.
@@ -395,7 +396,7 @@ def resolve_calendar_reference(
     if results is None:
         return None
     title, score, idx = results
-    if score < 50:
+    if score < min_score:
         return None
     ev = events[idx]
     return {"uid": ev.uid, "title": ev.title, "start": ev.start, "end": ev.end, "score": score}
@@ -532,12 +533,13 @@ def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]
     Returns list of {display_id, status: "resolved" | "still_unresolved"}.
     """
     unresolved = get_unresolved_tasks(conn)
+    min_score = int(get_config(conn, "calendar_fuzzy_min_score"))
     results = []
     for task in unresolved:
         label = task["due_event_label"]
         if not label:
             continue
-        match = resolve_calendar_reference(label, events)
+        match = resolve_calendar_reference(label, events, min_score=min_score)
         if match:
             event_start = datetime.fromisoformat(
                 match["start"].replace("Z", "+00:00")
