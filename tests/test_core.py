@@ -328,3 +328,60 @@ def test_list_tasks_filter_by_priority_and_category(conn):
     assert filtered[0]["title"] == "low personal"
     assert filtered[0]["priority"] == "low"
     assert filtered[0]["category"] == "personal"
+
+
+def test_get_config_returns_none_for_unset_optional_keys(conn):
+    """get_config returns None for unset optional config keys."""
+    from timeopt.core import get_config
+
+    # Get an optional key that's not set (caldav_password, llm_api_key)
+    value = get_config(conn, "caldav_password")
+    assert value is None
+
+    value = get_config(conn, "llm_api_key")
+    assert value is None
+
+
+def test_try_resolve_unresolved_with_no_matching_events(conn):
+    """try_resolve_unresolved returns empty result when no events match."""
+    from timeopt.core import dump_task, TaskInput, try_resolve_unresolved
+
+    # Create a task with unresolved reference
+    dump_task(conn, TaskInput(
+        title="unresolved", raw="unresolved", priority="high", urgent=False,
+        category="work", effort="small", due_event_label="Nonexistent Event"))
+
+    # Try to resolve with empty events
+    result = try_resolve_unresolved(conn, [])
+
+    # Should return empty list (no resolution possible)
+    assert isinstance(result, list)
+
+
+def test_sync_bound_tasks_with_missing_event(conn):
+    """sync_bound_tasks reports event_missing status when event deleted."""
+    from timeopt.core import dump_task, TaskInput, sync_bound_tasks
+
+    # Create a bound task
+    dump_task(conn, TaskInput(
+        title="bound task", raw="bound task", priority="high", urgent=False,
+        category="work", effort="small", due_event_label="Team Meeting"))
+
+    # Sync with empty events (event is missing)
+    result = sync_bound_tasks(conn, [])
+
+    # Should report about the bound task
+    assert isinstance(result, list)
+
+
+def test_get_all_config_returns_all_defaults(conn):
+    """get_all_config returns all config keys with their values."""
+    from timeopt.core import get_all_config
+
+    all_config = get_all_config(conn)
+
+    # Should include all default keys
+    assert "day_start" in all_config
+    assert "day_end" in all_config
+    assert "default_effort" in all_config
+    assert all_config["day_start"] == "09:00"

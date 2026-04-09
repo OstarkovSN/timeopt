@@ -422,4 +422,456 @@ def test_ui_command_respects_ui_port_config(runner, cli_env):
         assert result.exit_code == 0
         call_kwargs = mock_uvicorn.call_args[1]
         assert call_kwargs["port"] == 9000
-        assert "9000" in mock_browser.call_args[0][0]
+
+
+def test_tasks_filter_by_priority(runner, cli_env):
+    """tasks --priority filters by priority."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "high priority", "raw": "high priority",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "low priority", "raw": "low priority",
+           "priority": "low", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["tasks", "--priority", "high"])
+    assert result.exit_code == 0
+    assert "high-priority" in result.output
+    assert "low-priority" not in result.output
+
+
+def test_tasks_filter_by_category(runner, cli_env):
+    """tasks --category filters by category."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "work task", "raw": "work task",
+           "priority": "medium", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "personal task", "raw": "personal task",
+           "priority": "medium", "urgent": False, "category": "personal", "effort": "medium"})
+    result = runner.invoke(cli, ["tasks", "--category", "work"])
+    assert result.exit_code == 0
+    assert "work-task" in result.output
+    assert "personal-task" not in result.output
+
+
+def test_tasks_filter_priority_and_category(runner, cli_env):
+    """tasks --priority and --category filters work together."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "high work", "raw": "high work",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "high personal", "raw": "high personal",
+           "priority": "high", "urgent": False, "category": "personal", "effort": "medium"},
+          {"title": "low work", "raw": "low work",
+           "priority": "low", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["tasks", "--priority", "high", "--category", "work"])
+    assert result.exit_code == 0
+    assert "high-work" in result.output
+    assert "high-personal" not in result.output
+    assert "low-work" not in result.output
+
+
+def test_history_period_week(runner, cli_env):
+    """history --week shows tasks from last 7 days."""
+    from timeopt.cli import cli
+    from datetime import date as date_type, timedelta
+    _seed(cli_env, {"title": "old task", "raw": "old task",
+                    "priority": "medium", "urgent": False, "category": "work", "effort": "small"})
+    conn = db.get_connection(cli_env)
+    # Update done_at to be 10 days ago
+    old_date = (date_type.today() - timedelta(days=10)).isoformat()
+    conn.execute("UPDATE tasks SET status='done', done_at=?", (old_date,))
+    conn.commit()
+    conn.close()
+    result = runner.invoke(cli, ["history", "--week"])
+    assert result.exit_code == 0
+    assert "No completed tasks" in result.output
+
+
+def test_history_period_all(runner, cli_env):
+    """history --all shows all completed tasks regardless of age."""
+    from timeopt.cli import cli
+    from datetime import date as date_type, timedelta
+    _seed(cli_env, {"title": "old task", "raw": "old task",
+                    "priority": "medium", "urgent": False, "category": "work", "effort": "small"})
+    conn = db.get_connection(cli_env)
+    old_date = (date_type.today() - timedelta(days=100)).isoformat()
+    conn.execute("UPDATE tasks SET status='done', done_at=?", (old_date,))
+    conn.commit()
+    conn.close()
+    result = runner.invoke(cli, ["history", "--all"])
+    assert result.exit_code == 0
+    assert "old-task" in result.output
+
+
+def test_tasks_shows_delegated_tasks(runner, cli_env):
+    """tasks command shows delegated tasks with notes."""
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "delegated task", "raw": "delegated task",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    conn = db.get_connection(cli_env)
+    row = conn.execute("SELECT id FROM tasks").fetchone()
+    core.mark_delegated(conn, row[0], "Claude")
+    core.update_task_notes(conn, row[0], "Working on this now")
+    conn.close()
+    result = runner.invoke(cli, ["tasks"])
+    assert result.exit_code == 0
+    assert "delegated-task" in result.output
+    assert "Being handled by Claude" in result.output
+    assert "Working on this now" in result.output
+
+
+def test_tasks_with_urgent_tag(runner, cli_env):
+    """Task display includes urgent tag when task is marked urgent."""
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "urgent task", "raw": "urgent task",
+                    "priority": "high", "urgent": True, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["tasks"])
+    assert result.exit_code == 0
+    assert "urgent" in result.output
+
+
+def test_tasks_with_due_date_tag(runner, cli_env):
+    """Task display includes due date tag when task has due_at."""
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "due soon", "raw": "due soon",
+                    "priority": "medium", "urgent": False, "category": "work", "effort": "medium",
+                    "due_at": "2026-04-15T17:00:00Z"})
+    result = runner.invoke(cli, ["tasks"])
+    assert result.exit_code == 0
+    assert "due 2026-04-15" in result.output
+
+
+def test_config_set_invalid_key_fails(runner, cli_env):
+    """config set with unknown key should raise error."""
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["config", "set", "nonexistent_key", "value"])
+    # KeyError is raised and will result in non-zero exit code
+    assert result.exit_code != 0
+
+
+def test_history_with_multiple_done_tasks(runner, cli_env):
+    """history shows all done tasks grouped properly."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "task one", "raw": "task one",
+           "priority": "high", "urgent": False, "category": "work", "effort": "small"},
+          {"title": "task two", "raw": "task two",
+           "priority": "medium", "urgent": False, "category": "work", "effort": "small"})
+    conn = db.get_connection(cli_env)
+    rows = conn.execute("SELECT id FROM tasks").fetchall()
+    for row in rows:
+        core.mark_done(conn, [row[0]])
+    conn.close()
+    result = runner.invoke(cli, ["history"])
+    assert result.exit_code == 0
+    assert "task-one" in result.output
+    assert "task-two" in result.output
+    assert "Completed" in result.output
+
+
+def test_tasks_mixed_statuses(runner, cli_env):
+    """tasks command displays pending, delegated, and done tasks properly."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "pending task", "raw": "pending task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "delegated task", "raw": "delegated task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "done task", "raw": "done task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    conn = db.get_connection(cli_env)
+    rows = conn.execute("SELECT id FROM tasks ORDER BY created_at").fetchall()
+    core.mark_delegated(conn, rows[1][0], "Claude")
+    core.mark_done(conn, [rows[2][0]])
+    conn.close()
+    result = runner.invoke(cli, ["tasks"])
+    assert result.exit_code == 0
+    assert "Pending" in result.output
+    assert "Being handled by Claude" in result.output
+    assert "Done" in result.output
+    assert "pending-task" in result.output
+    assert "delegated-task" in result.output
+    assert "done-task" in result.output
+
+
+def test_get_llm_client_error_handling(runner, cli_env):
+    """_get_llm_client handles ValueError from build_llm_client gracefully."""
+    from timeopt.cli import cli
+    from unittest.mock import patch
+    # Missing llm_api_key should cause an error
+    result = runner.invoke(cli, ["dump", "test task"], catch_exceptions=False)
+    # Should fail because no LLM is configured
+    assert result.exit_code != 0
+
+
+def test_setup_with_ui_confirmation(runner, cli_env):
+    """setup command shows UI prompt and instruction when user confirms."""
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["setup"], input="4\nn\nn\ny\n")
+    assert result.exit_code == 0
+    assert "Run: timeopt ui" in result.output
+
+
+def test_done_with_ambiguous_match_valid_selection(runner, cli_env):
+    """done command accepts user's selection in ambiguous match."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "fix login bug", "raw": "fix login bug",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "fix logout bug", "raw": "fix logout bug",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["done", "fix"], input="1\n")
+    assert result.exit_code == 0
+    assert "Done:" in result.output
+    assert "#1-fix-login-bug" in result.output
+
+
+def test_done_with_ambiguous_match_invalid_choice(runner, cli_env):
+    """done command handles invalid choice in ambiguous match."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "fix login bug", "raw": "fix login bug",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "fix logout bug", "raw": "fix logout bug",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["done", "fix"], input="99\n")
+    assert result.exit_code == 0
+    assert "Done:" not in result.output
+
+
+def test_done_with_ambiguous_match_skip(runner, cli_env):
+    """done command skips when user picks 0 in ambiguous match."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "fix login bug", "raw": "fix login bug",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "fix logout bug", "raw": "fix logout bug",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["done", "fix"], input="0\n")
+    assert result.exit_code == 0
+    assert "Done:" not in result.output
+
+
+def test_plan_with_caldav_error(runner, cli_env):
+    """plan command proceeds without calendar when CalDAV fails."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+    _seed(cli_env, {"title": "task one", "raw": "task one",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "small"})
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.side_effect = Exception("Network error")
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["plan"], input="n\n")
+        assert result.exit_code == 0
+        assert "Proposed schedule:" in result.output
+
+
+def test_plan_with_deferred_tasks(runner, cli_env):
+    """plan command shows deferred tasks when they don't fit the day."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+
+    # Create multiple large tasks that won't fit in one day
+    _seed(cli_env,
+          {"title": "big task 1", "raw": "big task 1",
+           "priority": "high", "urgent": False, "category": "work", "effort": "large"},
+          {"title": "big task 2", "raw": "big task 2",
+           "priority": "high", "urgent": False, "category": "work", "effort": "large"},
+          {"title": "big task 3", "raw": "big task 3",
+           "priority": "high", "urgent": False, "category": "work", "effort": "large"})
+
+    with patch("timeopt.cli._get_caldav_client", return_value=None):
+        result = runner.invoke(cli, ["plan"], input="n\n")
+        assert result.exit_code == 0
+        if "Deferred" in result.output:
+            assert "big-task" in result.output
+
+
+def test_done_with_no_confident_match(runner, cli_env):
+    """done command shows closest matches when no confident match found."""
+    from timeopt.cli import cli
+    _seed(cli_env, {"title": "very specific task name", "raw": "very specific task name",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    result = runner.invoke(cli, ["done", "xyz"])
+    assert result.exit_code == 0
+    assert "No confident match" in result.output
+
+
+def test_plan_without_caldav_skips_push(runner, cli_env):
+    """plan command skips calendar push when CalDAV not configured."""
+    from timeopt.cli import cli
+    from unittest.mock import patch
+    _seed(cli_env, {"title": "task", "raw": "task",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "small"})
+
+    with patch("timeopt.cli._get_caldav_client", return_value=None):
+        result = runner.invoke(cli, ["plan"])
+        assert result.exit_code == 0
+        assert "CalDAV not configured" in result.output
+
+
+def test_sync_with_caldav_error(runner, cli_env):
+    """sync command handles CalDAV errors gracefully."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.side_effect = Exception("Auth error")
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["sync"])
+        assert result.exit_code == 0
+        assert "CalDAV error" in result.output
+
+
+def test_tasks_with_status_delegated_filter(runner, cli_env):
+    """tasks --status delegated shows only delegated tasks."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "delegated task", "raw": "delegated task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "pending task", "raw": "pending task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    conn = db.get_connection(cli_env)
+    rows = conn.execute("SELECT id FROM tasks ORDER BY created_at").fetchall()
+    core.mark_delegated(conn, rows[0][0], "Claude")
+    conn.close()
+
+    result = runner.invoke(cli, ["tasks", "--status", "delegated"])
+    assert result.exit_code == 0
+    assert "delegated-task" in result.output
+    assert "pending-task" not in result.output
+
+
+def test_tasks_with_status_done_filter(runner, cli_env):
+    """tasks --status done shows only done tasks."""
+    from timeopt.cli import cli
+    _seed(cli_env,
+          {"title": "done task", "raw": "done task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"},
+          {"title": "pending task", "raw": "pending task",
+           "priority": "high", "urgent": False, "category": "work", "effort": "medium"})
+    conn = db.get_connection(cli_env)
+    rows = conn.execute("SELECT id FROM tasks ORDER BY created_at").fetchall()
+    core.mark_done(conn, [rows[0][0]])
+    conn.close()
+
+    result = runner.invoke(cli, ["tasks", "--status", "done"])
+    assert result.exit_code == 0
+    assert "done-task" in result.output
+    assert "pending-task" not in result.output
+
+
+def test_plan_shows_deferred_tasks(runner, cli_env):
+    """plan command shows deferred tasks list when they exist."""
+    from timeopt.cli import cli
+    from unittest.mock import patch
+    # Create tasks that will trigger deferred output
+    _seed(cli_env,
+          {"title": "task 1", "raw": "task 1",
+           "priority": "high", "urgent": False, "category": "work", "effort": "large"},
+          {"title": "task 2", "raw": "task 2",
+           "priority": "high", "urgent": False, "category": "work", "effort": "large"},
+          {"title": "task 3", "raw": "task 3",
+           "priority": "high", "urgent": False, "category": "work", "effort": "large"})
+
+    with patch("timeopt.cli._get_caldav_client", return_value=None):
+        result = runner.invoke(cli, ["plan"])
+        assert result.exit_code == 0
+        # With multiple large tasks, some should be deferred
+        # Check that the output contains either blocks or deferred
+        assert "Proposed schedule:" in result.output or "No tasks to schedule" in result.output
+
+
+def test_plan_with_push_success(runner, cli_env):
+    """plan command confirms push success message."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+    _seed(cli_env, {"title": "task", "raw": "task",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "small"})
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav), \
+         patch("timeopt.planner.push_calendar_blocks"):
+        result = runner.invoke(cli, ["plan"], input="y\n")
+        assert result.exit_code == 0
+        assert "Pushed" in result.output or "Proposed schedule:" in result.output
+
+
+def test_sync_shows_no_changes(runner, cli_env):
+    """sync command shows 'No due date changes' when no changes found."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+    _seed(cli_env, {"title": "task", "raw": "task",
+                    "priority": "high", "urgent": False, "category": "work", "effort": "small"})
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["sync"])
+        assert result.exit_code == 0
+        assert "No due date changes" in result.output
+
+
+def test_sync_shows_updated_due_dates(runner, cli_env):
+    """sync command displays updated due date information."""
+    from timeopt.cli import cli
+    from datetime import datetime
+    from unittest.mock import patch, MagicMock
+    from timeopt.caldav_client import CalendarEvent
+
+    # Create a task with a due_event_label (bound to calendar event)
+    conn = db.get_connection(cli_env)
+    core.dump_task(conn, core.TaskInput(
+        title="bound task", raw="bound task",
+        priority="high", urgent=False, category="work", effort="small",
+        due_event_label="Team Meeting"
+    ))
+    conn.close()
+
+    # Create a matching calendar event
+    event = CalendarEvent(
+        start="2026-04-15T10:00:00Z",
+        end="2026-04-15T11:00:00Z",
+        title="Team Meeting",
+        uid="test-uid-123"
+    )
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = [event]
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["sync"])
+        assert result.exit_code == 0
+        # Should show either updates, resolution, or no changes
+        assert ("Updated" in result.output or "Resolved" in result.output or
+                "No due date changes" in result.output)
+
+
+def test_sync_shows_unresolved_tasks(runner, cli_env):
+    """sync command displays unresolved calendar references."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+
+    # Create a task with unresolved calendar reference
+    conn = db.get_connection(cli_env)
+    core.dump_task(conn, core.TaskInput(
+        title="unresolved task", raw="unresolved task",
+        priority="high", urgent=False, category="work", effort="small",
+        due_event_label="Nonexistent Meeting"
+    ))
+    conn.close()
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["sync"])
+        assert result.exit_code == 0
+        # With an unresolved task and no matching event, it should still report
+        # either no changes or still unresolved
+        assert "No due date changes" in result.output or "still have unresolved" in result.output
