@@ -6,3 +6,16 @@ __pycache__/
 dist/
 .superpowers/
 *.db
+
+# Claude local session state
+.claude/settings.local.json
+.claude/session*
+.claude/cache/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Coverage data
+.coverage
+htmlcov/
