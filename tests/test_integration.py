@@ -160,7 +160,7 @@ def test_config_day_start_end_affects_plan_capacity(server_env):
     set_config("day_start", "14:00")
     set_config("day_end", "17:00")
     result2 = get_plan_proposal(date="2026-04-09")
-    assert len(result2["blocks"]) <= 3
+    assert 1 <= len(result2["blocks"]) <= 3
     assert len(result2["deferred"]) >= 3
 
 
@@ -547,15 +547,11 @@ def test_delegation_full_note_progression(server_env):
     r4 = return_to_pending(task_id, notes="No update, taking back")
     assert r4["ok"] is True
 
-    # Verify final state by checking DB directly
+    # Verify task is back in pending status by checking DB directly
     task = _get_task_from_db(server_env, task_id)
     assert task is not None
-    # Status is in column index (check using raw DB columns)
-    # status is the 16th column: id, short_id, display_id, title, raw, priority, urgent,
-    # category, effort, due_at, due_event_uid, due_event_label, due_event_offset_min,
-    # due_unresolved, created_at, status (15 is 0-indexed)
-    # Just verify the row exists
-    assert len(task) > 0
+    # Access status column by name (sqlite3.Row supports column access)
+    assert task["status"] == "pending", f"Task {task_id} status should be 'pending' after return_to_pending, got {task['status']}"
 
 
 def test_delegation_then_list_shows_delegated(server_env):
