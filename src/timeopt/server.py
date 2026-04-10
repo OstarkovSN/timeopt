@@ -230,10 +230,8 @@ def get_dump_templates(fragments: list) -> dict:
         caldav = _get_caldav(conn)
         events = []
         if caldav:
-            try:
-                events = caldav.get_events(_date_type.today().isoformat(), days=30)
-            except Exception:
-                logger.exception("get_dump_templates: CalDAV unavailable, skipping event detection")
+            # get_events never raises — degrades to [] internally on CalDAV failure
+            events = caldav.get_events(_date_type.today().isoformat(), days=30)
         return core.get_dump_templates(fragments, events)
     finally:
         conn.close()
@@ -323,11 +321,9 @@ def get_plan_proposal(date: Optional[str] = None) -> dict:
         target = _parse_date(date).isoformat()
         events = []
         if caldav:
-            try:
-                events_raw = caldav.get_events(target, days=1)
-                events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-            except Exception:
-                logger.exception("get_plan_proposal: CalDAV unavailable, planning without calendar")
+            # get_events never raises — degrades to [] internally on CalDAV failure
+            events_raw = caldav.get_events(target, days=1)
+            events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
         return planner.get_plan_proposal(conn, events, target)
     finally:
         conn.close()

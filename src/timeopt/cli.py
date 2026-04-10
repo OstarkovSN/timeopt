@@ -453,11 +453,8 @@ def sync():
             click.echo("CalDAV not configured. Set caldav_username and caldav_password.")
             return
 
-        try:
-            events_raw = caldav.get_events(_date_type.today().isoformat(), days=90)
-        except Exception as e:
-            click.echo(f"CalDAV error: {e}", err=True)
-            return
+        # get_events never raises — degrades to [] internally on CalDAV failure
+        events_raw = caldav.get_events(_date_type.today().isoformat(), days=90)
 
         changes = core.sync_bound_tasks(conn, events_raw)
         resolved = core.try_resolve_unresolved(conn, events_raw)
