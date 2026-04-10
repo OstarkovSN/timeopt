@@ -47,13 +47,15 @@ class AnthropicClient(LLMClient):
 
 
 class OpenAICompatibleClient(LLMClient):
-    def __init__(self, base_url: str, api_key: str, model: str):
+    def __init__(self, base_url: str, api_key: str, model: str, max_tokens: int = 4096):
         self._client = openai.OpenAI(base_url=base_url, api_key=api_key)
         self._model = model
+        self._max_tokens = max_tokens
 
     def complete(self, system: str, user: str) -> str:
         response = self._client.chat.completions.create(
             model=self._model,
+            max_tokens=self._max_tokens,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -79,6 +81,7 @@ def build_llm_client(config: dict) -> LLMClient:
             base_url=config["llm_base_url"],
             api_key=config.get("llm_api_key", ""),
             model=config.get("llm_model", "claude-sonnet-4-6"),
+            max_tokens=max_tokens,
         )
     return AnthropicClient(
         api_key=config.get("llm_api_key"),
