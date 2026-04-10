@@ -273,7 +273,13 @@ def resolve_calendar_reference(label: str, date_range: Optional[dict] = None) ->
                 end_date = _datetime.fromisoformat(date_range["end"]).date()
                 days = max(1, (end_date - start_date).days)
         events_raw = caldav.get_events(start_date.isoformat(), days=days)
-        min_score = int(core.get_config(conn, "calendar_fuzzy_min_score"))
+        try:
+            min_score = int(core.get_config(conn, "calendar_fuzzy_min_score"))
+        except ValueError:
+            logger.warning(
+                "resolve_calendar_reference: calendar_fuzzy_min_score is not an integer, using default 50"
+            )
+            min_score = 50
         match = core.resolve_calendar_reference(label, events_raw, min_score=min_score)
         return {"candidates": [match] if match else []}
     finally:

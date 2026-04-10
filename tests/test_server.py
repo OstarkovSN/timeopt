@@ -261,6 +261,27 @@ def test_resolve_calendar_reference_no_match(mock_caldav):
     assert result["candidates"] == []
 
 
+def test_resolve_calendar_reference_bad_min_score_uses_default(server_env):
+    """Non-integer calendar_fuzzy_min_score falls back to 50 instead of raising ValueError."""
+    from timeopt.server import resolve_calendar_reference
+    conn = db.get_connection(os.environ["TIMEOPT_DB"])
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+        ("calendar_fuzzy_min_score", "bad_value")
+    )
+    conn.commit()
+    conn.close()
+
+    # CalDAV is configured but returns no events; should not raise ValueError
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        result = resolve_calendar_reference(label="standup", date_range=None)
+    # Should return empty candidates, not raise ValueError
+    assert "candidates" in result
+    assert isinstance(result["candidates"], list)
+
+
 def test_get_plan_proposal_with_caldav_events(mock_caldav):
     from timeopt.server import dump_task, get_plan_proposal
     dump_task(task={"raw": "fix login", "title": "fix login",
