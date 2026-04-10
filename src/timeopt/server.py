@@ -207,8 +207,11 @@ def set_config(key: str, value: str) -> dict:
     """Set a config value. Returns {ok, key, value}."""
     conn = _open_conn()
     try:
-        core.set_config(conn, key, value)
-        return {"ok": True, "key": key, "value": value}
+        try:
+            core.set_config(conn, key, value)
+            return {"ok": True, "key": key, "value": value}
+        except KeyError as e:
+            return {"error": str(e)}
     finally:
         conn.close()
 

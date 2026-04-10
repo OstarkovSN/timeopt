@@ -602,6 +602,13 @@ def test_get_config_unknown_key_uses_key_error_not_value_error(server_env):
     assert "error" in result
 
 
+def test_set_config_unknown_key_returns_error(server_env):
+    from timeopt.server import set_config
+    result = set_config(key="totally_made_up_key", value="anything")
+    assert "error" in result
+    assert "totally_made_up_key" in result["error"]
+
+
 # ---------------------------------------------------------------------------
 # Block 8: fuzzy_match_tasks edge cases
 # ---------------------------------------------------------------------------
