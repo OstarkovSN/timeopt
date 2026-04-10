@@ -34,7 +34,8 @@
 **Config errors:**
 - `core.get_config` raises `KeyError` (not `ValueError`) for unknown keys
 - `server.get_config` catches `KeyError` separately — don't change to `ValueError`
-- Optional config keys (`caldav_*`, `llm_*`) return `None` when unset — not a KeyError
+- Optional config keys (`caldav_username`, `caldav_password`, `llm_base_url`, `llm_api_key`, `llm_model`) return `None` when unset — not a KeyError
+- `caldav_url`, `caldav_read_calendars`, `caldav_tasks_calendar` have defaults (in `_CONFIG_DEFAULTS`) — they return default values, not None
 
 **push_calendar_blocks transaction order:**
 1. Collect old UIDs from DB (before changes)
@@ -56,4 +57,4 @@
 
 **Every server tool:** opens conn in `_open_conn()`, wraps mutations in `try/except ValueError → {"error": str(e)}`, closes in `finally`.
 
-**CalendarEvent objects:** `caldav_client` returns `CalendarEvent` dataclass objects (`.uid`, `.title`, `.start`, `.end`). `core.sync_bound_tasks`, `core.try_resolve_unresolved`, and planner functions all expect `list[CalendarEvent]` — they use attribute access, not dict access. Do NOT convert to dicts at the server boundary.
+**CalendarEvent objects:** `caldav_client` returns `CalendarEvent` dataclass objects (`.uid`, `.title`, `.start`, `.end`). `core.sync_bound_tasks`, `core.try_resolve_unresolved`, and planner functions all expect `list[CalendarEvent]` — they use attribute access, not dict access. Do NOT convert to dicts at the server boundary. Exception: `server.get_plan_proposal` converts events to `list[dict]` for the planner, which expects `{start, end, title}` dicts. All `core.*` functions take raw CalendarEvent objects.

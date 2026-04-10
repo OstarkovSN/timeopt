@@ -54,4 +54,4 @@ TIMEOPT_DB=/tmp/test.db uv run timeopt tasks  # use isolated DB
 
 ## Slash Commands
 
-`/timeopt:dump`, `/timeopt:tasks`, `/timeopt:plan`, `/timeopt:done`, `/timeopt:sync`, `/timeopt:history`, `/timeopt:check-urgent`
+`/timeopt:dump`, `/timeopt:tasks`, `/timeopt:plan`, `/timeopt:done`, `/timeopt:sync`, `/timeopt:history`, `/timeopt:check-urgent`, `/timeopt:setup`

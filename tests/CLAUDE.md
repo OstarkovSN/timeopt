@@ -48,7 +48,7 @@ with patch("timeopt.server._get_caldav", return_value=mock_caldav):
 
 **LLM client:** Patch at `timeopt.cli._get_llm_client` (for CLI tests) or pass a `MagicMock` with `.complete()` method directly (for core unit tests).
 
-**`CalendarEvent` objects vs dicts:** `caldav_client.get_events` returns `CalendarEvent` dataclass objects. `core.sync_bound_tasks` and `core.resolve_calendar_reference` also expect `CalendarEvent` objects (they access `.uid`, `.title`, `.start`, `.end` attributes). The server converts them to dicts before passing to `planner.get_plan_proposal`. Match the interface expected by the function under test.
+**`CalendarEvent` objects vs dicts:** `caldav_client.get_events` returns `CalendarEvent` dataclass objects. `core.sync_bound_tasks`, `core.resolve_calendar_reference`, and other server tools expect `CalendarEvent` objects (they access `.uid`, `.title`, `.start`, `.end` attributes). All server tools pass CalendarEvent objects DIRECTLY to core.* functions. Exception to the 'Do NOT convert' rule: `server.get_plan_proposal` converts events to `list[dict]` for the planner, which expects `{start, end, title}` dicts. Match the interface expected by the function under test.
 
 ## Seeding Tasks
 
@@ -77,7 +77,11 @@ dump_task(task={"title": "fix login", "raw": "fix login",
 | `test_push_blocks.py` | push_calendar_blocks (full CalDAV failure case) |
 | `test_caldav.py` | CalDAVClient, connection failure |
 | `test_llm.py` | LLM client success paths |
-| `test_server.py` | 19 server tools; CalDAV tools tested only in "not configured" state |
+| `test_server.py` | 18 server tools; CalDAV tools tested only in "not configured" state |
+| `test_ui_server.py` | FastAPI config UI endpoints (GET /config, POST /api/config/{key}, GET /api/config) |
+| `test_integration.py` | cross-module integration: config→planner, CalDAV happy path, sync lifecycle, delegation, LLM/CLI dump |
+| `test_e2e_cli.py` | end-to-end CLI scenarios |
+| `test_e2e_server.py` | end-to-end server scenarios |
 | `test_cli.py` | CLI commands via CliRunner |
 | `test_sync.py` | sync_bound_tasks |
 
