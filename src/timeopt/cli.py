@@ -192,7 +192,8 @@ def config_set(key, value):
     try:
         try:
             core.set_config(conn, key, value)
-            click.echo(f"Set {key} = {value}")
+            display_value = "***" if key in core._SENSITIVE_CONFIG_KEYS else value
+            click.echo(f"Set {key} = {display_value}")
         except KeyError as e:
             click.echo(f"Error: {e}", err=True)
             raise SystemExit(1)
