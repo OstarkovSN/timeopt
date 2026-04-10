@@ -417,7 +417,11 @@ def plan(plan_date):
         if not click.confirm("\nPush to calendar?", default=True):
             return
 
-        planner.push_calendar_blocks(conn, proposal, target, caldav)
+        try:
+            planner.push_calendar_blocks(conn, proposal, target, caldav)
+        except RuntimeError as e:
+            click.echo(f"Error pushing to calendar: {e}", err=True)
+            raise SystemExit(1)
         click.echo(f"Pushed {len(blocks)} block(s) to calendar.")
     finally:
         conn.close()

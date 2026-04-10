@@ -879,6 +879,25 @@ def test_plan_with_push_success(runner, cli_env):
         assert "Pushed" in result.output or "Proposed schedule:" in result.output
 
 
+def test_plan_push_caldav_failure_shows_user_friendly_error(runner, cli_env):
+    """plan command shows user-friendly error when CalDAV push fails with RuntimeError."""
+    from timeopt.cli import cli
+    from unittest.mock import patch, MagicMock
+    _seed(cli_env, {"title": "task to push", "raw": "task to push",
+                    "priority": "high", "urgent": True, "category": "work", "effort": "small"})
+
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav), \
+         patch("timeopt.planner.push_calendar_blocks",
+               side_effect=RuntimeError("CalDAV write failed: 503")):
+        result = runner.invoke(cli, ["plan"], input="y\n")
+
+    assert result.exit_code != 0
+    assert "Error" in result.output or "caldav" in result.output.lower()
+
+
 def test_sync_shows_no_changes(runner, cli_env):
     """sync command shows 'No due date changes' when no changes found."""
     from timeopt.cli import cli
