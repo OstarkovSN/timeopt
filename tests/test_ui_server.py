@@ -134,3 +134,15 @@ def test_password_fields_render_as_password_type(ui_env):
     resp = client.get("/config")
     assert resp.status_code == 200
     assert 'type="password"' in resp.text or "type='password'" in resp.text
+
+
+def test_post_config_unknown_key_is_logged(ui_env, caplog):
+    """POST /api/config/{key} with unknown key logs a warning."""
+    import logging
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with caplog.at_level(logging.WARNING, logger="timeopt.ui_server"):
+        response = client.post("/api/config/totally_unknown_key_xyz", data={"value": "foo"})
+    assert response.status_code == 200  # HTMX expects 200 to swap
+    assert any("totally_unknown_key_xyz" in r.message for r in caplog.records)

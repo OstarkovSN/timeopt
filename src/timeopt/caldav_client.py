@@ -133,6 +133,10 @@ class CalDAVClient:
                 try:
                     server_uid = event.instance.vevent.uid.value
                 except Exception:
+                    logger.warning(
+                        "create_event: could not read server UID for '%s', using generated uid=%s",
+                        title, uid
+                    )
                     server_uid = uid
         except RuntimeError:
             raise

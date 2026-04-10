@@ -75,6 +75,7 @@ async def set_config_field(request: Request, key: str, value: str = Form("")):
                 {"key": key, "value": value, "status": "saved"},
             )
         except KeyError as e:
+            logger.warning("set_config_field: unknown config key submitted: %s", key)
             return templates.TemplateResponse(
                 request, "partials/config_field.html",
                 {"key": key, "value": value, "status": "error", "error": str(e)},

@@ -386,3 +386,46 @@ def test_create_event_when_caldav_not_installed_raises_runtime_error():
     with patch("timeopt.caldav_client.caldav", None):
         with pytest.raises(RuntimeError, match="caldav package"):
             client.create_event("Test", "2026-04-10T09:00:00", "2026-04-10T10:00:00")
+
+
+def test_create_event_uid_fallback_is_logged(caplog):
+    """When UID extraction fails, a warning is logged with the fallback uid."""
+    import logging
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # Create event that raises when accessing uid
+        created_event = MagicMock()
+        uid_mock = MagicMock()
+        type(uid_mock).value = PropertyMock(side_effect=Exception("no uid"))
+        created_event.instance.vevent.uid = uid_mock
+        mock_tasks_cal.save_event.return_value = created_event
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="timeopt.caldav_client"):
+            uid = client.create_event(
+                title="Event without server UID",
+                start="2026-03-28T10:00:00+00:00",
+                end="2026-03-28T11:00:00+00:00",
+            )
+
+        # Verify warning was logged with event title and uuid
+        assert any("Event without server UID" in r.message for r in caplog.records), \
+            f"Expected title in warning, got: {[r.message for r in caplog.records]}"
+        assert any(uid in r.message for r in caplog.records), \
+            f"Expected uid in warning, got: {[r.message for r in caplog.records]}"
