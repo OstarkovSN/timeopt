@@ -992,7 +992,8 @@ def test_done_command_bad_fuzzy_config_uses_default(runner, cli_env):
     conn.close()
     # Should not crash — should just show "No matching tasks"
     result = runner.invoke(cli, ["done", "some task title"])
-    assert result.exit_code == 0 or "Error" not in result.output or result.exit_code != 2
+    assert result.exit_code == 0
+    assert "ValueError" not in (result.output + str(result.exception or ""))
 
 
 def test_cli_sync_updates_task_with_due_event_uid(runner, cli_env):

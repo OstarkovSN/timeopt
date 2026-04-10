@@ -196,7 +196,7 @@ def get_config(key: Optional[str] = None) -> dict:
             try:
                 return {"key": key, "value": core.get_config(conn, key)}
             except KeyError:
-                return {"error": f"Unknown config key: {key}"}
+                return {"ok": False, "error": f"Unknown config key: {key}"}
         return core.get_all_config(conn)
     finally:
         conn.close()

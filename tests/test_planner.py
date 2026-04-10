@@ -298,3 +298,15 @@ def test_get_plan_proposal_bad_day_start_uses_default(tmp_path):
     assert "blocks" in result
     assert "deferred" in result
     conn.close()
+
+
+def test_get_plan_proposal_bad_break_duration_uses_default(tmp_path):
+    """If break_duration_min config is invalid, planner uses default 15 and does not crash."""
+    from timeopt import db, core, planner
+    conn = db.get_connection(str(tmp_path / "test.db"))
+    db.create_schema(conn)
+    core.set_config(conn, "break_duration_min", "not_a_number")
+    result = planner.get_plan_proposal(conn, [], date="2026-04-10")
+    assert "blocks" in result
+    assert "deferred" in result
+    conn.close()

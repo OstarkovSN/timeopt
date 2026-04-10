@@ -193,3 +193,26 @@ def test_build_llm_client_passes_max_tokens_to_anthropic():
         client.complete(system="s", user="u")
         call_kwargs = mock_client.messages.create.call_args[1]
         assert call_kwargs["max_tokens"] == 2048
+
+
+def test_openai_compatible_client_passes_max_tokens():
+    """OpenAICompatibleClient.complete() must pass max_tokens to chat.completions.create."""
+    from unittest.mock import MagicMock, patch
+    mock_client_class = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "result text"
+    mock_client_class.return_value.chat.completions.create.return_value = mock_response
+
+    with patch("timeopt.llm_client.openai.OpenAI", mock_client_class):
+        from timeopt.llm_client import OpenAICompatibleClient
+        client = OpenAICompatibleClient(
+            base_url="http://localhost:11434/v1",
+            api_key="ollama",
+            model="llama3",
+            max_tokens=512,
+        )
+        result = client.complete("system prompt", "user message")
+
+    assert result == "result text"
+    call_kwargs = mock_client_class.return_value.chat.completions.create.call_args
+    assert call_kwargs.kwargs.get("max_tokens") == 512

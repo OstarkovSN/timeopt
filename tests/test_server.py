@@ -781,3 +781,10 @@ def test_push_calendar_blocks_planner_error_returns_structured_error(server_env)
         )
     assert result.get("ok") is False
     assert "error" in result
+
+
+def test_get_config_unknown_key_returns_ok_false(server_env):
+    from timeopt import server
+    result = server.get_config(key="completely_unknown_key_xyz")
+    assert result.get("ok") is False
+    assert "error" in result
