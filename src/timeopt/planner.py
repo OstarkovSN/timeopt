@@ -174,8 +174,8 @@ def get_plan_proposal(
     try:
         break_min = int(config["break_duration_min"])
     except (ValueError, TypeError):
-        logger.warning("get_plan_proposal: break_duration_min is not a valid integer, using default 10")
-        break_min = 10
+        logger.warning("get_plan_proposal: break_duration_min is not a valid integer, using default 15")
+        break_min = 15
 
     free_slots = _compute_free_slots(date, events, day_start, day_end)
     tasks = classify_tasks(conn)  # sorted Q1→Q4, urgency upgraded
