@@ -421,3 +421,15 @@ def test_try_resolve_unresolved_bad_min_score_uses_default(conn):
     # Should not raise — should fall back gracefully
     result = try_resolve_unresolved(conn, events)
     assert isinstance(result, list)
+
+
+def test_try_resolve_unresolved_handles_keyerror_for_missing_config(tmp_path):
+    """try_resolve_unresolved must not crash if get_config raises KeyError."""
+    from unittest.mock import patch
+    from timeopt import db, core
+    conn = db.get_connection(str(tmp_path / "test.db"))
+    db.create_schema(conn)
+    with patch("timeopt.core.get_config", side_effect=KeyError("calendar_fuzzy_min_score")):
+        result = core.try_resolve_unresolved(conn, [])
+    assert isinstance(result, list)
+    conn.close()

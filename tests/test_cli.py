@@ -1029,3 +1029,15 @@ def test_cli_sync_updates_task_with_due_event_uid(runner, cli_env):
     conn2.close()
     assert row is not None
     assert row[0] is not None  # due_at should now be set
+
+
+def test_setup_wizard_keyboard_interrupt_does_not_show_config_save_error(cli_env):
+    """click.Abort during setup prompt should NOT produce 'Error saving configuration'."""
+    from click.testing import CliRunner
+    from timeopt.cli import cli
+    from unittest.mock import patch
+    import click as _click
+    runner = CliRunner()
+    with patch("click.confirm", side_effect=_click.exceptions.Abort()):
+        result = runner.invoke(cli, ["setup"])
+    assert "Error saving configuration" not in result.output

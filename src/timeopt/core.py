@@ -547,7 +547,7 @@ def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]
     unresolved = get_unresolved_tasks(conn)
     try:
         min_score = int(get_config(conn, "calendar_fuzzy_min_score"))
-    except ValueError:
+    except (ValueError, KeyError):
         logger.warning(
             "try_resolve_unresolved: calendar_fuzzy_min_score is not a valid integer, using default 50"
         )

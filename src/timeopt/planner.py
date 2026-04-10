@@ -169,8 +169,16 @@ def get_plan_proposal(
         date = datetime.now(timezone.utc).date().isoformat()
 
     config = get_all_config(conn)
-    day_start = _parse_time(date, config["day_start"])
-    day_end = _parse_time(date, config["day_end"])
+    try:
+        day_start = _parse_time(date, config["day_start"])
+        day_end = _parse_time(date, config["day_end"])
+    except ValueError:
+        logger.warning(
+            "get_plan_proposal: invalid day_start/day_end config ('%s'/'%s'), using defaults 09:00-18:00",
+            config.get("day_start"), config.get("day_end"),
+        )
+        day_start = _parse_time(date, "09:00")
+        day_end = _parse_time(date, "18:00")
     try:
         break_min = int(config["break_duration_min"])
     except (ValueError, TypeError):

@@ -284,6 +284,8 @@ def setup():
                 click.echo("Run: timeopt ui")
 
             click.echo("\nSetup complete.")
+        except (click.exceptions.Abort, click.exceptions.Exit):
+            raise  # let click handle user interrupts naturally
         except Exception as e:
             logger.exception("setup: wizard failed")
             click.echo(f"Error saving configuration: {e}", err=True)

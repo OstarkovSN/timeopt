@@ -286,3 +286,15 @@ def test_push_calendar_blocks_with_empty_blocks(conn):
 
     # Should be None (returns early)
     assert result is None
+
+
+def test_get_plan_proposal_bad_day_start_uses_default(tmp_path):
+    """If day_start config is invalid, planning uses defaults and does not crash."""
+    from timeopt import db, core, planner
+    conn = db.get_connection(str(tmp_path / "test.db"))
+    db.create_schema(conn)
+    core.set_config(conn, "day_start", "9am_invalid")
+    result = planner.get_plan_proposal(conn, [], date="2026-04-10")
+    assert "blocks" in result
+    assert "deferred" in result
+    conn.close()
