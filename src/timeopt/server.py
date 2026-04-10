@@ -209,7 +209,8 @@ def set_config(key: str, value: str) -> dict:
     try:
         try:
             core.set_config(conn, key, value)
-            return {"ok": True, "key": key, "value": value}
+            display_value = "***" if key in core._SENSITIVE_CONFIG_KEYS else value
+            return {"ok": True, "key": key, "value": display_value}
         except KeyError as e:
             logger.warning("set_config: rejected unknown key=%s", key)
             return {"ok": False, "error": str(e)}

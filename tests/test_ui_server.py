@@ -146,3 +146,23 @@ def test_post_config_unknown_key_is_logged(ui_env, caplog):
         response = client.post("/api/config/totally_unknown_key_xyz", data={"value": "foo"})
     assert response.status_code == 200  # HTMX expects 200 to swap
     assert any("totally_unknown_key_xyz" in r.message for r in caplog.records)
+
+
+def test_get_config_api_does_not_expose_sensitive_values(ui_env):
+    """GET /api/config masks llm_api_key and caldav_password."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+
+    # Set sensitive values first
+    client = TestClient(app)
+    client.post("/api/config/llm_api_key", data={"value": "sk-super-secret"})
+    client.post("/api/config/caldav_password", data={"value": "hunter2"})
+
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("llm_api_key") != "sk-super-secret"
+    assert body.get("caldav_password") != "hunter2"
+    # Should be masked
+    assert body.get("llm_api_key") == "***"
+    assert body.get("caldav_password") == "***"

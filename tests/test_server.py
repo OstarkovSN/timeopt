@@ -631,6 +631,33 @@ def test_set_config_unknown_key_returns_error(server_env):
     assert "totally_made_up_key" in result["error"]
 
 
+def test_set_config_sensitive_key_masks_value_in_response(server_env):
+    """set_config success response masks sensitive values."""
+    from timeopt.server import set_config
+    result = set_config(key="llm_api_key", value="sk-secret-xyz")
+    assert result["ok"] is True
+    assert result["key"] == "llm_api_key"
+    assert result["value"] != "sk-secret-xyz"
+    assert result["value"] == "***"
+
+
+def test_set_config_caldav_password_masked_in_response(server_env):
+    """set_config masks caldav_password in response."""
+    from timeopt.server import set_config
+    result = set_config(key="caldav_password", value="hunter2")
+    assert result["ok"] is True
+    assert result["value"] != "hunter2"
+    assert result["value"] == "***"
+
+
+def test_set_config_non_sensitive_key_shows_value_in_response(server_env):
+    """set_config shows actual value for non-sensitive keys."""
+    from timeopt.server import set_config
+    result = set_config(key="day_start", value="08:00")
+    assert result["ok"] is True
+    assert result["value"] == "08:00"
+
+
 # ---------------------------------------------------------------------------
 # Block 8: fuzzy_match_tasks edge cases
 # ---------------------------------------------------------------------------
