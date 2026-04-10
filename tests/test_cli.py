@@ -101,6 +101,13 @@ def test_config_set_and_get(runner, cli_env):
     assert "08:00" in result.output
 
 
+def test_config_set_unknown_key_shows_error(runner, cli_env):
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["config", "set", "nonexistent_key", "val"])
+    assert result.exit_code != 0
+    assert "nonexistent_key" in result.output
+
+
 def test_done_marks_task(runner, cli_env):
     from timeopt.cli import cli
     _seed(cli_env, {"title": "fix login bug", "raw": "fix login bug",

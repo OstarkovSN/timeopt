@@ -190,8 +190,12 @@ def config_set(key, value):
     """Set a config value."""
     conn = _open_conn()
     try:
-        core.set_config(conn, key, value)
-        click.echo(f"Set {key} = {value}")
+        try:
+            core.set_config(conn, key, value)
+            click.echo(f"Set {key} = {value}")
+        except KeyError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
     finally:
         conn.close()
 
