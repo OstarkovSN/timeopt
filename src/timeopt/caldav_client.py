@@ -66,6 +66,9 @@ class CalDAVClient:
         Fetch events for the given date range.
         Returns [] on connection failure (warn, don't raise).
         """
+        if caldav is None:
+            logger.error("get_events: caldav package is not installed — returning empty list")
+            return []
         try:
             start = datetime.fromisoformat(f"{date}T00:00:00+00:00")
             end = start + timedelta(days=days)
@@ -98,7 +101,7 @@ class CalDAVClient:
             logger.info("get_events: %d events for %s", len(events), date)
             return events
         except Exception:
-            logger.warning("CalDAV unreachable — returning empty event list")
+            logger.exception("get_events: CalDAV request failed for date=%s", date)
             return []
 
     def _ensure_tasks_calendar(self, principal):

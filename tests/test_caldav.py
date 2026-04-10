@@ -336,3 +336,31 @@ def test_create_event_uid_fallback():
         # Should return the locally-generated UUID (not the server one)
         # Verify it's a valid UUID format
         uuid.UUID(uid)
+
+
+def test_get_events_auth_failure_logs_exception(caplog):
+    """Auth error should be logged with traceback (logger.exception), not just a warning."""
+    import logging
+    client = CalDAVClient(
+        url="https://caldav.example.com",
+        username="user",
+        password="wrong",
+    )
+    mock_caldav_module = MagicMock()
+    mock_caldav_module.DAVClient.return_value.__enter__.return_value.principal.side_effect = (
+        Exception("401 Unauthorized")
+    )
+    with patch("timeopt.caldav_client.caldav", mock_caldav_module):
+        with caplog.at_level(logging.ERROR, logger="timeopt.caldav_client"):
+            result = client.get_events("2026-04-10")
+    assert result == []
+    assert any(r.exc_info is not None for r in caplog.records), \
+        "Expected logger.exception (with traceback), got logger.warning (no traceback)"
+
+
+def test_get_events_when_caldav_not_installed_returns_empty():
+    """If caldav package is absent (caldav=None), return [] with a clear log."""
+    client = CalDAVClient(url="https://caldav.example.com", username="u", password="p")
+    with patch("timeopt.caldav_client.caldav", None):
+        result = client.get_events("2026-04-10")
+    assert result == []
