@@ -248,7 +248,13 @@ def list_tasks(
     """
     _auto_classify(conn)
 
-    hide_days = int(get_config(conn, "hide_done_after_days"))
+    try:
+        hide_days = int(get_config(conn, "hide_done_after_days"))
+    except ValueError:
+        logger.warning(
+            "list_tasks: hide_done_after_days is not a valid integer, using default 7"
+        )
+        hide_days = 7
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=hide_days)
     ).isoformat()
@@ -539,7 +545,13 @@ def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]
     Returns list of {display_id, status: "resolved" | "still_unresolved"}.
     """
     unresolved = get_unresolved_tasks(conn)
-    min_score = int(get_config(conn, "calendar_fuzzy_min_score"))
+    try:
+        min_score = int(get_config(conn, "calendar_fuzzy_min_score"))
+    except ValueError:
+        logger.warning(
+            "try_resolve_unresolved: calendar_fuzzy_min_score is not a valid integer, using default 50"
+        )
+        min_score = 50
     results = []
     for task in unresolved:
         label = task["due_event_label"]

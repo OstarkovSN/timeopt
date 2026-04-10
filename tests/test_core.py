@@ -399,3 +399,25 @@ def test_get_all_config_returns_all_defaults(conn):
     assert "day_end" in all_config
     assert "default_effort" in all_config
     assert all_config["day_start"] == "09:00"
+
+
+def test_list_tasks_bad_hide_done_after_days_uses_default(conn):
+    """Non-integer hide_done_after_days falls back to 7 instead of raising ValueError."""
+    from timeopt.core import set_config
+    set_config(conn, "hide_done_after_days", "not_a_number")
+    # Should not raise — should fall back gracefully
+    result = list_tasks(conn, status="done")
+    assert isinstance(result, list)
+
+
+def test_try_resolve_unresolved_bad_min_score_uses_default(conn):
+    """Non-integer calendar_fuzzy_min_score falls back to 50 instead of raising ValueError."""
+    from timeopt.core import set_config, try_resolve_unresolved
+    from timeopt.caldav_client import CalendarEvent
+
+    set_config(conn, "calendar_fuzzy_min_score", "not_a_number")
+    events = [CalendarEvent(start="2026-04-20T10:00:00Z", end="2026-04-20T11:00:00Z",
+                            title="Meeting", uid="e-1")]
+    # Should not raise — should fall back gracefully
+    result = try_resolve_unresolved(conn, events)
+    assert isinstance(result, list)
