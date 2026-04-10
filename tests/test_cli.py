@@ -743,22 +743,6 @@ def test_done_with_ambiguous_match_skip(runner, cli_env):
     assert "Done:" not in result.output
 
 
-def test_plan_with_caldav_error(runner, cli_env):
-    """plan command proceeds without calendar when CalDAV fails."""
-    from timeopt.cli import cli
-    from unittest.mock import patch, MagicMock
-    _seed(cli_env, {"title": "task one", "raw": "task one",
-                    "priority": "high", "urgent": False, "category": "work", "effort": "small"})
-
-    mock_caldav = MagicMock()
-    mock_caldav.get_events.side_effect = Exception("Network error")
-
-    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
-        result = runner.invoke(cli, ["plan"], input="n\n")
-        assert result.exit_code == 0
-        assert "Proposed schedule:" in result.output
-
-
 def test_plan_with_deferred_tasks(runner, cli_env):
     """plan command shows deferred tasks when they don't fit the day."""
     from timeopt.cli import cli

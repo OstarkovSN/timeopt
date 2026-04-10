@@ -344,8 +344,8 @@ def push_calendar_blocks(blocks: list, date: Optional[str] = None) -> dict:
         target = _parse_date(date).isoformat()
         try:
             planner.push_calendar_blocks(conn, {"blocks": blocks}, target, caldav)
-        except Exception as e:
-            logger.exception("push_calendar_blocks: failed")
+        except RuntimeError as e:
+            logger.error("push_calendar_blocks: CalDAV write failed: %s", e)
             return {"ok": False, "error": str(e)}
         return {"ok": True, "pushed": len(blocks)}
     finally:
