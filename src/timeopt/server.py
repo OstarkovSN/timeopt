@@ -211,7 +211,8 @@ def set_config(key: str, value: str) -> dict:
             core.set_config(conn, key, value)
             return {"ok": True, "key": key, "value": value}
         except KeyError as e:
-            return {"error": str(e)}
+            logger.warning("set_config: rejected unknown key=%s", key)
+            return {"ok": False, "error": str(e)}
     finally:
         conn.close()
 
