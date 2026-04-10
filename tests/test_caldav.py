@@ -364,3 +364,25 @@ def test_get_events_when_caldav_not_installed_returns_empty():
     with patch("timeopt.caldav_client.caldav", None):
         result = client.get_events("2026-04-10")
     assert result == []
+
+
+def test_create_event_wraps_error_with_context():
+    """CalDAV write failure should raise RuntimeError with task title in the message."""
+    client = CalDAVClient(url="https://caldav.example.com", username="u", password="p")
+    mock_caldav_module = MagicMock()
+    mock_caldav_module.DAVClient.return_value.__enter__.return_value.principal.side_effect = (
+        Exception("503 Service Unavailable")
+    )
+    with patch("timeopt.caldav_client.caldav", mock_caldav_module):
+        with pytest.raises(RuntimeError) as exc_info:
+            client.create_event("Team standup", "2026-04-10T09:00:00", "2026-04-10T09:30:00")
+    assert "Team standup" in str(exc_info.value)
+    assert "503" in str(exc_info.value)
+
+
+def test_create_event_when_caldav_not_installed_raises_runtime_error():
+    """If caldav package is absent, raise RuntimeError immediately."""
+    client = CalDAVClient(url="https://caldav.example.com", username="u", password="p")
+    with patch("timeopt.caldav_client.caldav", None):
+        with pytest.raises(RuntimeError, match="caldav package"):
+            client.create_event("Test", "2026-04-10T09:00:00", "2026-04-10T10:00:00")

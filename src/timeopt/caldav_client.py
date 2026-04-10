@@ -116,20 +116,28 @@ class CalDAVClient:
         """
         Create a calendar event in the Timeopt calendar.
         Returns the CalDAV UID of the created event.
+        Raises RuntimeError on connection or write failure.
         """
+        if caldav is None:
+            raise RuntimeError("caldav package is not installed")
         uid = str(_uuid.uuid4())
         ical = _build_ical(title, start, end, uid)
-        with caldav.DAVClient(
-            url=self._url, username=self._username, password=self._password
-        ) as client:
-            principal = client.principal()
-            tasks_cal = self._ensure_tasks_calendar(principal)
-            event = tasks_cal.save_event(ical)
-            # Some servers return the uid directly; use our generated uid as fallback
-            try:
-                server_uid = event.instance.vevent.uid.value
-            except Exception:
-                server_uid = uid
+        try:
+            with caldav.DAVClient(
+                url=self._url, username=self._username, password=self._password
+            ) as client:
+                principal = client.principal()
+                tasks_cal = self._ensure_tasks_calendar(principal)
+                event = tasks_cal.save_event(ical)
+                # Some servers return the uid directly; use our generated uid as fallback
+                try:
+                    server_uid = event.instance.vevent.uid.value
+                except Exception:
+                    server_uid = uid
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"CalDAV create_event failed for '{title}': {e}") from e
         logger.info("created event: %s uid=%s", title, server_uid)
         return server_uid
 
