@@ -34,11 +34,20 @@ async def root():
     return RedirectResponse(url="/config")
 
 
+def _mask_sensitive(cfg: dict) -> dict:
+    """Return a copy of cfg with sensitive values replaced by '***'."""
+    cfg = dict(cfg)
+    for k in core._SENSITIVE_CONFIG_KEYS:
+        if cfg.get(k):
+            cfg[k] = "***"
+    return cfg
+
+
 @app.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request):
     conn = _open_conn()
     try:
-        cfg = core.get_all_config(conn)
+        cfg = _mask_sensitive(core.get_all_config(conn))
         return templates.TemplateResponse(
             request, "config.html", {"config": cfg}
         )
@@ -53,7 +62,7 @@ async def config_page(request: Request):
 async def config_partial(request: Request):
     conn = _open_conn()
     try:
-        cfg = core.get_all_config(conn)
+        cfg = _mask_sensitive(core.get_all_config(conn))
         return templates.TemplateResponse(
             request, "partials/config.html", {"config": cfg}
         )
@@ -70,15 +79,17 @@ async def set_config_field(request: Request, key: str, value: str = Form("")):
     try:
         try:
             core.set_config(conn, key, value)
+            display_value = "***" if key in core._SENSITIVE_CONFIG_KEYS else value
             return templates.TemplateResponse(
                 request, "partials/config_field.html",
-                {"key": key, "value": value, "status": "saved"},
+                {"key": key, "value": display_value, "status": "saved"},
             )
         except KeyError as e:
+            error_msg = e.args[0] if e.args else str(e)
             logger.warning("set_config_field: unknown config key submitted: %s", key)
             return templates.TemplateResponse(
                 request, "partials/config_field.html",
-                {"key": key, "value": value, "status": "error", "error": str(e)},
+                {"key": key, "value": value, "status": "error", "error": error_msg},
             )
         except Exception as e:
             logger.exception("set_config_field: unexpected error for key=%s", key)

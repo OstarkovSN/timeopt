@@ -148,6 +148,65 @@ def test_post_config_unknown_key_is_logged(ui_env, caplog):
     assert any("totally_unknown_key_xyz" in r.message for r in caplog.records)
 
 
+def test_config_page_does_not_expose_sensitive_values_in_html(ui_env):
+    """GET /config must not embed raw sensitive values in HTML source."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    from timeopt import db, core
+
+    # Pre-seed a sensitive value directly into the DB
+    conn = db.get_connection(ui_env)
+    core.set_config(conn, "llm_api_key", "sk-secret-key-12345")
+    conn.commit()
+    conn.close()
+
+    client = TestClient(app)
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    assert "sk-secret-key-12345" not in resp.text
+
+
+def test_config_partial_does_not_expose_sensitive_values(ui_env):
+    """GET /partials/config must not embed raw sensitive values in HTML source."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    from timeopt import db, core
+
+    conn = db.get_connection(ui_env)
+    core.set_config(conn, "llm_api_key", "sk-secret-key-12345")
+    conn.commit()
+    conn.close()
+
+    client = TestClient(app)
+    resp = client.get("/partials/config")
+    assert resp.status_code == 200
+    assert "sk-secret-key-12345" not in resp.text
+
+
+def test_post_config_sensitive_key_does_not_echo_value_in_response(ui_env):
+    """POST /api/config/llm_api_key must not return the plaintext secret in the response body."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    resp = client.post("/api/config/llm_api_key", data={"value": "sk-plaintext-secret"})
+    assert resp.status_code == 200
+    assert "sk-plaintext-secret" not in resp.text
+
+
+def test_post_config_unknown_key_error_message_not_double_quoted(ui_env):
+    """POST /api/config with an unknown key must NOT produce double-quoted error like \"'Unknown config key:\"."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    resp = client.post("/api/config/totally_nonexistent_key_xyz", data={"value": "bar"})
+    assert resp.status_code == 200
+    # str(KeyError(...)) wraps the message in extra quotes — assert that pattern is absent
+    assert "\"'Unknown config key:" not in resp.text
+    assert "'Unknown config key:" not in resp.text or "\"'Unknown" not in resp.text
+
+
 def test_get_config_api_does_not_expose_sensitive_values(ui_env):
     """GET /api/config masks llm_api_key and caldav_password."""
     from timeopt.ui_server import app
