@@ -328,9 +328,10 @@ def test_setup_scheduling_defaults(runner, cli_env):
 
 
 def test_ui_command_starts_uvicorn(runner, cli_env):
-    """timeopt ui starts uvicorn and opens browser."""
+    """timeopt ui starts uvicorn and opens browser in background thread."""
     from timeopt.cli import cli
     from unittest.mock import patch
+    import time
     with patch("uvicorn.run") as mock_uvicorn, \
          patch("webbrowser.open") as mock_browser:
         result = runner.invoke(cli, ["ui"])
@@ -338,6 +339,8 @@ def test_ui_command_starts_uvicorn(runner, cli_env):
         mock_uvicorn.assert_called_once()
         call_args = mock_uvicorn.call_args
         assert "timeopt.ui_server:app" in call_args[0]
+        # Wait for background thread to call webbrowser.open (with 0.8s delay + margin)
+        time.sleep(1.0)
         mock_browser.assert_called_once()
         assert "7749" in mock_browser.call_args[0][0]
 
@@ -429,6 +432,19 @@ def test_ui_command_respects_ui_port_config(runner, cli_env):
         assert result.exit_code == 0
         call_kwargs = mock_uvicorn.call_args[1]
         assert call_kwargs["port"] == 9000
+
+
+def test_ui_command_bad_port_shows_error(runner, cli_env):
+    """If ui_port is non-integer, show clean error instead of ValueError traceback."""
+    from timeopt.cli import cli
+    from timeopt import db, core
+    conn = db.get_connection(cli_env)
+    core.set_config(conn, "ui_port", "not_a_number")
+    conn.close()
+
+    result = runner.invoke(cli, ["ui"])
+    assert result.exit_code != 0
+    assert "not_a_number" in result.output
 
 
 def test_tasks_filter_by_priority(runner, cli_env):

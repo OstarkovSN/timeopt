@@ -473,16 +473,28 @@ def sync():
 @cli.command()
 def ui():
     """Start the timeopt web UI and open it in a browser."""
+    import threading
+    import time
     import webbrowser
     import uvicorn
 
     conn = _open_conn()
     try:
-        port = int(core.get_config(conn, "ui_port") or "7749")
+        raw_port = core.get_config(conn, "ui_port") or "7749"
+        try:
+            port = int(raw_port)
+        except ValueError:
+            click.echo(f"Error: ui_port config value '{raw_port}' is not a valid integer.", err=True)
+            raise SystemExit(1)
     finally:
         conn.close()
 
     url = f"http://127.0.0.1:{port}"
     click.echo(f"Starting timeopt UI at {url}  (Ctrl+C to stop)")
-    webbrowser.open(url)
+
+    def _delayed_open():
+        time.sleep(0.8)
+        webbrowser.open(url)
+
+    threading.Thread(target=_delayed_open, daemon=True).start()
     uvicorn.run("timeopt.ui_server:app", host="127.0.0.1", port=port)
