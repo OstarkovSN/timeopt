@@ -1,0 +1,96 @@
+# tests/ — Test Context
+
+## Run Tests
+
+```bash
+uv run pytest tests/ -v               # all tests
+uv run pytest tests/test_core.py -v   # single file
+uv run pytest -k test_name -v         # single test
+```
+
+## Fixture Patterns
+
+**`conn` fixture (`conftest.py`):** In-memory SQLite DB with schema. Use for unit tests that call `core.*` or `planner.*` functions directly.
+
+```python
+def test_something(conn):
+    core.create_task(conn, core.TaskInput(...))
+```
+
+**`server_env` / `cli_env` fixtures (in test_server.py / test_cli.py):** Create a real DB file in `tmp_path`, then patch `TIMEOPT_DB` env var so the server/CLI module opens that file. Use for integration-style tests that call server tools or CLI commands.
+
+```python
+@pytest.fixture
+def server_env(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    conn = db.get_connection(db_path)
+    db.create_schema(conn)
+    conn.close()
+    with patch.dict(os.environ, {"TIMEOPT_DB": db_path}):
+        yield db_path
+```
+
+Do NOT use the `conn` fixture in server/CLI tests — server tools open their own connection via `_open_conn()`.
+
+## Click CLI Testing
+
+**CliRunner exception handling:** Use `result.exit_code != 0` to detect command errors, not just `result.exception` presence. CliRunner captures exceptions in `result.exception` when exit code is non-zero; checking exit code is more reliable for distinguishing normal failure from success.
+
+**Setup wizard test sequences:** Skip all prompts (yes/no) with "n", but provider choices (e.g., "1" for Anthropic) and custom text (e.g., API key) are required inputs that advance multi-part wizard flows — omitting them causes the wizard to fail validation rather than proceed.
+
+**OSError from uvicorn.run:** Wrap with `except OSError as e:` to catch socket binding failures; "Address already in use" is the standard message. Catch OSError specifically to avoid masking unexpected exceptions. Server startup errors may also include KeyboardInterrupt and other signals.
+
+## Mock Conventions
+
+**CalDAV:** Patch at `timeopt.server._get_caldav`, not at the `caldav` library level. Return a `MagicMock` with `.get_events()`, `.create_event()`, `.delete_event()` methods.
+
+```python
+mock_caldav = MagicMock()
+mock_caldav.get_events.return_value = [
+    CalendarEvent(start="2026-04-01T09:00:00Z", end="2026-04-01T10:00:00Z",
+                  title="Team sync", uid="abc-123")
+]
+with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+    result = get_calendar_events()
+```
+
+**LLM client:** Patch at `timeopt.cli._get_llm_client` (for CLI tests) or pass a `MagicMock` with `.complete()` method directly (for core unit tests).
+
+**`CalendarEvent` objects vs dicts:** `caldav_client.get_events` returns `CalendarEvent` dataclass objects. `core.sync_bound_tasks`, `core.resolve_calendar_reference`, and other server tools expect `CalendarEvent` objects (they access `.uid`, `.title`, `.start`, `.end` attributes). All server tools pass CalendarEvent objects DIRECTLY to core.* functions. Exception to the 'Do NOT convert' rule: `server.get_plan_proposal` converts events to `list[dict]` for the planner, which expects `{start, end, title}` dicts. Match the interface expected by the function under test.
+
+## Seeding Tasks
+
+```python
+# Direct (unit tests with conn fixture)
+core.dump_task(conn, core.TaskInput(
+    title="fix login bug", raw="fix login bug",
+    priority="high", urgent=False, category="work", effort="medium"
+))
+
+# Via server (server_env fixture) — also tests dump_task server tool
+from timeopt.server import dump_task
+dump_task(task={"title": "fix login", "raw": "fix login",
+                "priority": "high", "urgent": False,
+                "category": "work", "effort": "medium"})
+```
+
+## What's Tested Where
+
+| File | Covers |
+|---|---|
+| `test_db.py` | Schema creation, constraint definitions |
+| `test_core.py` | Task CRUD, config, list/filter |
+| `test_core_integrations.py` | dump templates, resolve_calendar_reference, sync |
+| `test_planner.py` | Eisenhower classification, scheduling, free-slot computation |
+| `test_push_blocks.py` | push_calendar_blocks (full CalDAV failure case) |
+| `test_caldav.py` | CalDAVClient, connection failure |
+| `test_llm.py` | LLM client success paths |
+| `test_server.py` | 18 server tools; CalDAV tools tested only in "not configured" state |
+| `test_ui_server.py` | FastAPI config UI endpoints (GET /config, POST /api/config/{key}, GET /api/config) |
+| `test_integration.py` | cross-module integration: config→planner, CalDAV happy path, sync lifecycle, delegation, LLM/CLI dump |
+| `test_e2e_cli.py` | end-to-end CLI scenarios |
+| `test_e2e_server.py` | end-to-end server scenarios |
+| `test_cli.py` | CLI commands via CliRunner |
+| `test_sync.py` | sync_bound_tasks |
+
+See `@docs/superpowers/notes/test-coverage-gaps.md` for prioritized list of missing tests.

@@ -39,11 +39,11 @@ def _get_llm_client(conn):
 
 def _get_caldav_client(conn):
     from timeopt.caldav_client import CalDAVClient
-    url = core.get_config(conn, "caldav_url") or "https://caldav.yandex.ru"
+    url = core.get_config(conn, "caldav_url")
     username = core.get_config(conn, "caldav_username")
     password = core.get_config(conn, "caldav_password")
-    read_cals = core.get_config(conn, "caldav_read_calendars") or "all"
-    tasks_cal = core.get_config(conn, "caldav_tasks_calendar") or "Timeopt"
+    read_cals = core.get_config(conn, "caldav_read_calendars")
+    tasks_cal = core.get_config(conn, "caldav_tasks_calendar")
     if not username or not password:
         return None
     return CalDAVClient(url=url, username=username, password=password,
@@ -173,8 +173,12 @@ def config_get(key):
     conn = _open_conn()
     try:
         if key:
-            value = core.get_config(conn, key)
-            click.echo(f"{key} = {value if value is not None else '(not set)'}")
+            try:
+                value = core.get_config(conn, key)
+                click.echo(f"{key} = {value if value is not None else '(not set)'}")
+            except KeyError as e:
+                click.echo(f"Error: {e}", err=True)
+                raise SystemExit(1)
         else:
             all_cfg = core.get_all_config(conn)
             for k, v in sorted(all_cfg.items()):
@@ -190,8 +194,102 @@ def config_set(key, value):
     """Set a config value."""
     conn = _open_conn()
     try:
-        core.set_config(conn, key, value)
-        click.echo(f"Set {key} = {value}")
+        try:
+            core.set_config(conn, key, value)
+            display_value = "***" if key in core._SENSITIVE_CONFIG_KEYS else value
+            click.echo(f"Set {key} = {display_value}")
+        except KeyError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
+    finally:
+        conn.close()
+
+
+@cli.command()
+def setup():
+    """Interactive setup wizard. Configures LLM, CalDAV, and scheduling defaults."""
+    conn = _open_conn()
+    try:
+        try:
+            cfg = core.get_all_config(conn)
+
+            llm_ok = bool(cfg.get("llm_api_key"))
+            caldav_ok = bool(cfg.get("caldav_username") and cfg.get("caldav_password"))
+            click.echo("Current state:")
+            click.echo(f"  LLM:    {'configured' if llm_ok else 'not set'}")
+            click.echo(f"  CalDAV: {'configured' if caldav_ok else 'not set'}")
+            click.echo("")
+
+            # Step 1: LLM provider
+            click.echo("LLM provider:")
+            click.echo("  1. Anthropic")
+            click.echo("  2. OpenAI")
+            click.echo("  3. Custom (OpenAI-compatible)")
+            click.echo("  4. Skip")
+            choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4"]), default="4")
+
+            if choice == "1":
+                api_key = click.prompt("Anthropic API key",
+                                       default=cfg.get("llm_api_key") or "", hide_input=True)
+                model = click.prompt("Model", default=cfg.get("llm_model") or "claude-sonnet-4-6")
+                core.set_config(conn, "llm_api_key", api_key)
+                core.set_config(conn, "llm_model", model)
+            elif choice == "2":
+                api_key = click.prompt("OpenAI API key",
+                                       default=cfg.get("llm_api_key") or "", hide_input=True)
+                model = click.prompt("Model", default=cfg.get("llm_model") or "gpt-4o")
+                core.set_config(conn, "llm_base_url", "https://api.openai.com/v1")
+                core.set_config(conn, "llm_api_key", api_key)
+                core.set_config(conn, "llm_model", model)
+            elif choice == "3":
+                base_url = click.prompt("Base URL", default=cfg.get("llm_base_url") or "")
+                api_key = click.prompt("API key",
+                                       default=cfg.get("llm_api_key") or "", hide_input=True)
+                model = click.prompt("Model", default=cfg.get("llm_model") or "")
+                core.set_config(conn, "llm_base_url", base_url)
+                core.set_config(conn, "llm_api_key", api_key)
+                core.set_config(conn, "llm_model", model)
+
+            # Step 2: CalDAV
+            if click.confirm("\nConfigure CalDAV (Yandex Calendar or any CalDAV server)?", default=False):
+                url = click.prompt("CalDAV URL",
+                                   default=cfg.get("caldav_url") or "https://caldav.yandex.ru")
+                username = click.prompt("Username", default=cfg.get("caldav_username") or "")
+                password = click.prompt("Password",
+                                        default=cfg.get("caldav_password") or "", hide_input=True)
+                core.set_config(conn, "caldav_url", url)
+                core.set_config(conn, "caldav_username", username)
+                core.set_config(conn, "caldav_password", password)
+
+            # Step 3: Scheduling defaults
+            if click.confirm("\nCustomize scheduling defaults?", default=False):
+                day_start = click.prompt("Day start (HH:MM)",
+                                         default=cfg.get("day_start") or "09:00")
+                day_end = click.prompt("Day end (HH:MM)",
+                                       default=cfg.get("day_end") or "18:00")
+                break_min = click.prompt("Break between tasks (minutes)",
+                                         default=cfg.get("break_duration_min") or "15")
+                default_effort = click.prompt(
+                    "Default effort",
+                    default=cfg.get("default_effort") or "medium",
+                    type=click.Choice(["small", "medium", "large"]),
+                )
+                core.set_config(conn, "day_start", day_start)
+                core.set_config(conn, "day_end", day_end)
+                core.set_config(conn, "break_duration_min", break_min)
+                core.set_config(conn, "default_effort", default_effort)
+
+            # Step 4: Web UI
+            if click.confirm("\nOpen web UI?", default=False):
+                click.echo("Run: timeopt ui")
+
+            click.echo("\nSetup complete.")
+        except (click.exceptions.Abort, click.exceptions.Exit):
+            raise  # let click handle user interrupts naturally
+        except Exception as e:
+            logger.exception("setup: wizard failed")
+            click.echo(f"Error saving configuration: {e}", err=True)
+            raise SystemExit(1)
     finally:
         conn.close()
 
@@ -202,8 +300,17 @@ def done(queries):
     """Mark tasks as done by fuzzy match. Accepts partial names."""
     conn = _open_conn()
     try:
-        min_score = int(core.get_config(conn, "fuzzy_match_min_score") or 80)
-        ask_gap = int(core.get_config(conn, "fuzzy_match_ask_gap") or 10)
+        try:
+            min_score = int(core.get_config(conn, "fuzzy_match_min_score") or 80)
+        except ValueError:
+            logger.warning("done: fuzzy_match_min_score is not a valid integer, using default 80")
+            min_score = 80
+
+        try:
+            ask_gap = int(core.get_config(conn, "fuzzy_match_ask_gap") or 10)
+        except ValueError:
+            logger.warning("done: fuzzy_match_ask_gap is not a valid integer, using default 10")
+            ask_gap = 10
 
         task_ids = []
         confirmed_dids = []
@@ -274,11 +381,9 @@ def plan(plan_date):
         target = plan_date or _date_type.today().isoformat()
         events = []
         if caldav:
-            try:
-                raw_events = caldav.get_events(target, days=1)
-                events = [{"start": e.start, "end": e.end, "title": e.title} for e in raw_events]
-            except Exception:
-                logger.exception("plan: CalDAV unavailable, proceeding without calendar")
+            # get_events never raises — degrades to [] internally on CalDAV failure
+            raw_events = caldav.get_events(target, days=1)
+            events = [{"start": e.start, "end": e.end, "title": e.title} for e in raw_events]
 
         proposal = planner.get_plan_proposal(conn, events, target)
         blocks = proposal.get("blocks", [])
@@ -312,7 +417,11 @@ def plan(plan_date):
         if not click.confirm("\nPush to calendar?", default=True):
             return
 
-        planner.push_calendar_blocks(conn, proposal, target, caldav)
+        try:
+            planner.push_calendar_blocks(conn, proposal, target, caldav)
+        except RuntimeError as e:
+            click.echo(f"Error pushing to calendar: {e}", err=True)
+            raise SystemExit(1)
         click.echo(f"Pushed {len(blocks)} block(s) to calendar.")
     finally:
         conn.close()
@@ -348,15 +457,11 @@ def sync():
             click.echo("CalDAV not configured. Set caldav_username and caldav_password.")
             return
 
-        try:
-            events_raw = caldav.get_events(_date_type.today().isoformat(), days=90)
-            events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-        except Exception as e:
-            click.echo(f"CalDAV error: {e}", err=True)
-            return
+        # get_events never raises — degrades to [] internally on CalDAV failure
+        events_raw = caldav.get_events(_date_type.today().isoformat(), days=90)
 
-        changes = core.sync_bound_tasks(conn, events)
-        resolved = core.try_resolve_unresolved(conn, events)
+        changes = core.sync_bound_tasks(conn, events_raw)
+        resolved = core.try_resolve_unresolved(conn, events_raw)
         still_unresolved = core.get_unresolved_tasks(conn)
 
         if changes:
@@ -382,3 +487,46 @@ def sync():
             click.echo("Run '/sync' in Claude Code to resolve these interactively.")
     finally:
         conn.close()
+
+
+@cli.command()
+def ui():
+    """Start the timeopt web UI and open it in a browser."""
+    import threading
+    import time
+    import webbrowser
+    try:
+        import uvicorn
+    except ImportError:
+        click.echo(
+            "Error: uvicorn is required for the web UI. "
+            "Install it with: pip install uvicorn[standard]",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    conn = _open_conn()
+    try:
+        raw_port = core.get_config(conn, "ui_port") or "7749"
+        try:
+            port = int(raw_port)
+        except ValueError:
+            click.echo(f"Error: ui_port config value '{raw_port}' is not a valid integer.", err=True)
+            raise SystemExit(1)
+    finally:
+        conn.close()
+
+    url = f"http://127.0.0.1:{port}"
+    click.echo(f"Starting timeopt UI at {url}  (Ctrl+C to stop)")
+
+    def _delayed_open():
+        time.sleep(0.8)
+        webbrowser.open(url)
+
+    threading.Thread(target=_delayed_open, daemon=True).start()
+    try:
+        uvicorn.run("timeopt.ui_server:app", host="127.0.0.1", port=port)
+    except OSError as e:
+        click.echo(f"Error: could not start UI server on port {port}: {e}", err=True)
+        click.echo(f"Tip: change ui_port with: timeopt config set ui_port <port>", err=True)
+        raise SystemExit(1)

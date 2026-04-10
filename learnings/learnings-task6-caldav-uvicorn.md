@@ -1,0 +1,4 @@
+## Implementer
+- `PropertyMock(side_effect=AttributeError(...))` on a `MagicMock` is silently swallowed — MagicMock intercepts AttributeError during attribute access and returns a new mock instead of raising; use `ValueError` or `KeyError` in tests that mock UID extraction failure
+- `click.echo(..., err=True)` output appears in `result.output` (not just `result.stderr`) when using the default `CliRunner()` because `mix_stderr=True` by default — so asserting against `result.output` works for both stdout and stderr messages
+- When narrowing a broad `except Exception` that was previously tested with a generic `Exception("msg")` side_effect, the tests must be updated to raise one of the newly-allowed specific types — failing to do so causes the exception to bubble past the narrowed handler and get caught by the outer `except Exception as e: raise RuntimeError(...)`, breaking both the test and the semantics

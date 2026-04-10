@@ -66,6 +66,9 @@ class CalDAVClient:
         Fetch events for the given date range.
         Returns [] on connection failure (warn, don't raise).
         """
+        if caldav is None:
+            logger.warning("get_events: caldav package is not installed — returning empty list")
+            return []
         try:
             start = datetime.fromisoformat(f"{date}T00:00:00+00:00")
             end = start + timedelta(days=days)
@@ -98,7 +101,7 @@ class CalDAVClient:
             logger.info("get_events: %d events for %s", len(events), date)
             return events
         except Exception:
-            logger.warning("CalDAV unreachable — returning empty event list")
+            logger.exception("get_events: CalDAV request failed for date=%s", date)
             return []
 
     def _ensure_tasks_calendar(self, principal):
@@ -113,25 +116,37 @@ class CalDAVClient:
         """
         Create a calendar event in the Timeopt calendar.
         Returns the CalDAV UID of the created event.
+        Raises RuntimeError on connection or write failure.
         """
+        if caldav is None:
+            raise RuntimeError("caldav package is not installed")
         uid = str(_uuid.uuid4())
         ical = _build_ical(title, start, end, uid)
-        with caldav.DAVClient(
-            url=self._url, username=self._username, password=self._password
-        ) as client:
-            principal = client.principal()
-            tasks_cal = self._ensure_tasks_calendar(principal)
-            event = tasks_cal.save_event(ical)
-            # Some servers return the uid directly; use our generated uid as fallback
-            try:
-                server_uid = event.instance.vevent.uid.value
-            except Exception:
-                server_uid = uid
+        try:
+            with caldav.DAVClient(
+                url=self._url, username=self._username, password=self._password
+            ) as client:
+                principal = client.principal()
+                tasks_cal = self._ensure_tasks_calendar(principal)
+                event = tasks_cal.save_event(ical)
+                # Some servers return the uid directly; use our generated uid as fallback
+                try:
+                    server_uid = event.instance.vevent.uid.value
+                except (AttributeError, ValueError, KeyError):
+                    logger.warning(
+                        "create_event: could not read server UID for '%s', using generated uid=%s",
+                        title, uid
+                    )
+                    server_uid = uid
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"CalDAV create_event failed for '{title}': {e}") from e
         logger.info("created event: %s uid=%s", title, server_uid)
         return server_uid
 
     def delete_event(self, caldav_uid: str) -> None:
-        """Delete a Timeopt calendar event by its CalDAV UID."""
+        """Delete a Timeopt calendar event by its CalDAV UID. Raises RuntimeError on failure."""
         try:
             with caldav.DAVClient(
                 url=self._url, username=self._username, password=self._password
@@ -141,5 +156,7 @@ class CalDAVClient:
                 event = tasks_cal.event_by_uid(caldav_uid)
                 event.delete()
             logger.info("deleted event uid=%s", caldav_uid)
-        except Exception:
-            logger.exception("failed to delete event uid=%s", caldav_uid)
+        except Exception as e:
+            error_msg = f"failed to delete event uid={caldav_uid}: {e}"
+            logger.exception("delete_event: %s", error_msg)
+            raise RuntimeError(error_msg) from e

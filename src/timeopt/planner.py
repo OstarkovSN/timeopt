@@ -101,12 +101,19 @@ def _parse_time(date_str: str, time_str: str) -> datetime:
 
 
 def _effort_minutes(effort: str | None, config: dict) -> int:
+    def _safe_int(val, default: int, label: str) -> int:
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            logger.warning("_effort_minutes: %s is not a valid integer, using default %d", label, default)
+            return default
+
     mapping = {
-        "small": int(config["effort_small_min"]),
-        "medium": int(config["effort_medium_min"]),
-        "large": int(config["effort_large_min"]),
+        "small": _safe_int(config["effort_small_min"], 30, "effort_small_min"),
+        "medium": _safe_int(config["effort_medium_min"], 60, "effort_medium_min"),
+        "large": _safe_int(config["effort_large_min"], 120, "effort_large_min"),
     }
-    return mapping.get(effort or "medium", int(config["effort_medium_min"]))
+    return mapping.get(effort or "medium", _safe_int(config["effort_medium_min"], 60, "effort_medium_min"))
 
 
 def _compute_free_slots(
@@ -162,9 +169,21 @@ def get_plan_proposal(
         date = datetime.now(timezone.utc).date().isoformat()
 
     config = get_all_config(conn)
-    day_start = _parse_time(date, config["day_start"])
-    day_end = _parse_time(date, config["day_end"])
-    break_min = int(config["break_duration_min"])
+    try:
+        day_start = _parse_time(date, config["day_start"])
+        day_end = _parse_time(date, config["day_end"])
+    except ValueError:
+        logger.warning(
+            "get_plan_proposal: invalid day_start/day_end config ('%s'/'%s'), using defaults 09:00-18:00",
+            config.get("day_start"), config.get("day_end"),
+        )
+        day_start = _parse_time(date, "09:00")
+        day_end = _parse_time(date, "18:00")
+    try:
+        break_min = int(config["break_duration_min"])
+    except (ValueError, TypeError):
+        logger.warning("get_plan_proposal: break_duration_min is not a valid integer, using default 15")
+        break_min = 15
 
     free_slots = _compute_free_slots(date, events, day_start, day_end)
     tasks = classify_tasks(conn)  # sorted Q1→Q4, urgency upgraded
@@ -316,9 +335,12 @@ def push_calendar_blocks(
         )
         new_uids.append(uid)
 
-    # Step 3: all creates succeeded — delete old CalDAV events
+    # Step 3: all creates succeeded — delete old CalDAV events (best-effort, failures logged but don't fail the push)
     for uid in old_uids:
-        caldav_client.delete_event(uid)
+        try:
+            caldav_client.delete_event(uid)
+        except RuntimeError:
+            logger.warning("push_calendar_blocks: failed to delete old event uid=%s, continuing", uid)
 
     # Step 4: commit SQLite atomically
     conn.execute("DELETE FROM calendar_blocks WHERE plan_date=?", (date,))

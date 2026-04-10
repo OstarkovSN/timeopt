@@ -2,7 +2,6 @@
   "name": "timeopt",
   "description": "Personal task manager with Eisenhower Matrix prioritization and Yandex Calendar integration. Brain-dump tasks, generate a daily schedule, and delegate urgent tasks to Claude.",
   "version": "0.1.0",
-  "author": {
-    "name": "timeopt"
-  }
+  "author": "OstarkovSN & Claude",
+  "license": "MIT"
 }

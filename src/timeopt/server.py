@@ -35,11 +35,11 @@ def _parse_date(date_str: Optional[str]) -> _date_type:
 
 
 def _get_caldav(conn) -> Optional[CalDAVClient]:
-    url = core.get_config(conn, "caldav_url") or "https://caldav.yandex.ru"
+    url = core.get_config(conn, "caldav_url")
     username = core.get_config(conn, "caldav_username")
     password = core.get_config(conn, "caldav_password")
-    read_cals = core.get_config(conn, "caldav_read_calendars") or "all"
-    tasks_cal = core.get_config(conn, "caldav_tasks_calendar") or "Timeopt"
+    read_cals = core.get_config(conn, "caldav_read_calendars")
+    tasks_cal = core.get_config(conn, "caldav_tasks_calendar")
     if not username or not password:
         return None
     return CalDAVClient(
@@ -196,7 +196,7 @@ def get_config(key: Optional[str] = None) -> dict:
             try:
                 return {"key": key, "value": core.get_config(conn, key)}
             except KeyError:
-                return {"error": f"Unknown config key: {key}"}
+                return {"ok": False, "error": f"Unknown config key: {key}"}
         return core.get_all_config(conn)
     finally:
         conn.close()
@@ -207,8 +207,13 @@ def set_config(key: str, value: str) -> dict:
     """Set a config value. Returns {ok, key, value}."""
     conn = _open_conn()
     try:
-        core.set_config(conn, key, value)
-        return {"ok": True, "key": key, "value": value}
+        try:
+            core.set_config(conn, key, value)
+            display_value = "***" if key in core._SENSITIVE_CONFIG_KEYS else value
+            return {"ok": True, "key": key, "value": display_value}
+        except KeyError as e:
+            logger.warning("set_config: rejected unknown key=%s", key)
+            return {"ok": False, "error": str(e)}
     finally:
         conn.close()
 
@@ -225,11 +230,8 @@ def get_dump_templates(fragments: list) -> dict:
         caldav = _get_caldav(conn)
         events = []
         if caldav:
-            try:
-                events_raw = caldav.get_events(_date_type.today().isoformat(), days=30)
-                events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-            except Exception:
-                logger.exception("get_dump_templates: CalDAV unavailable, skipping event detection")
+            # get_events never raises — degrades to [] internally on CalDAV failure
+            events = caldav.get_events(_date_type.today().isoformat(), days=30)
         return core.get_dump_templates(fragments, events)
     finally:
         conn.close()
@@ -271,8 +273,14 @@ def resolve_calendar_reference(label: str, date_range: Optional[dict] = None) ->
                 end_date = _datetime.fromisoformat(date_range["end"]).date()
                 days = max(1, (end_date - start_date).days)
         events_raw = caldav.get_events(start_date.isoformat(), days=days)
-        events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-        match = core.resolve_calendar_reference(label, events)
+        try:
+            min_score = int(core.get_config(conn, "calendar_fuzzy_min_score"))
+        except (ValueError, KeyError):
+            logger.warning(
+                "resolve_calendar_reference: calendar_fuzzy_min_score is not an integer, using default 50"
+            )
+            min_score = 50
+        match = core.resolve_calendar_reference(label, events_raw, min_score=min_score)
         return {"candidates": [match] if match else []}
     finally:
         conn.close()
@@ -313,11 +321,9 @@ def get_plan_proposal(date: Optional[str] = None) -> dict:
         target = _parse_date(date).isoformat()
         events = []
         if caldav:
-            try:
-                events_raw = caldav.get_events(target, days=1)
-                events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-            except Exception:
-                logger.exception("get_plan_proposal: CalDAV unavailable, planning without calendar")
+            # get_events never raises — degrades to [] internally on CalDAV failure
+            events_raw = caldav.get_events(target, days=1)
+            events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
         return planner.get_plan_proposal(conn, events, target)
     finally:
         conn.close()
@@ -336,7 +342,11 @@ def push_calendar_blocks(blocks: list, date: Optional[str] = None) -> dict:
         if not caldav:
             return {"ok": False, "error": "CalDAV not configured"}
         target = _parse_date(date).isoformat()
-        planner.push_calendar_blocks(conn, {"blocks": blocks}, target, caldav)
+        try:
+            planner.push_calendar_blocks(conn, {"blocks": blocks}, target, caldav)
+        except RuntimeError as e:
+            logger.error("push_calendar_blocks: CalDAV write failed: %s", e)
+            return {"ok": False, "error": str(e)}
         return {"ok": True, "pushed": len(blocks)}
     finally:
         conn.close()
@@ -355,10 +365,10 @@ def sync_calendar(date_range_days: int = 30) -> dict:
         caldav = _get_caldav(conn)
         if not caldav:
             return {"ok": False, "error": "CalDAV not configured"}
+        # get_events never raises — degrades to [] internally on failure
         events_raw = caldav.get_events(_date_type.today().isoformat(), days=date_range_days)
-        events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
-        updated = core.sync_bound_tasks(conn, events)
-        resolved = core.try_resolve_unresolved(conn, events)
+        updated = core.sync_bound_tasks(conn, events_raw)
+        resolved = core.try_resolve_unresolved(conn, events_raw)
         still_unresolved = core.get_unresolved_tasks(conn)
         return {
             "ok": True,

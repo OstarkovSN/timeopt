@@ -261,6 +261,27 @@ def test_resolve_calendar_reference_no_match(mock_caldav):
     assert result["candidates"] == []
 
 
+def test_resolve_calendar_reference_bad_min_score_uses_default(server_env):
+    """Non-integer calendar_fuzzy_min_score falls back to 50 instead of raising ValueError."""
+    from timeopt.server import resolve_calendar_reference
+    conn = db.get_connection(os.environ["TIMEOPT_DB"])
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+        ("calendar_fuzzy_min_score", "bad_value")
+    )
+    conn.commit()
+    conn.close()
+
+    # CalDAV is configured but returns no events; should not raise ValueError
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        result = resolve_calendar_reference(label="standup", date_range=None)
+    # Should return empty candidates, not raise ValueError
+    assert "candidates" in result
+    assert isinstance(result["candidates"], list)
+
+
 def test_get_plan_proposal_with_caldav_events(mock_caldav):
     from timeopt.server import dump_task, get_plan_proposal
     dump_task(task={"raw": "fix login", "title": "fix login",
@@ -602,6 +623,41 @@ def test_get_config_unknown_key_uses_key_error_not_value_error(server_env):
     assert "error" in result
 
 
+def test_set_config_unknown_key_returns_error(server_env):
+    from timeopt.server import set_config
+    result = set_config(key="totally_made_up_key", value="anything")
+    assert result.get("ok") is False
+    assert "error" in result
+    assert "totally_made_up_key" in result["error"]
+
+
+def test_set_config_sensitive_key_masks_value_in_response(server_env):
+    """set_config success response masks sensitive values."""
+    from timeopt.server import set_config
+    result = set_config(key="llm_api_key", value="sk-secret-xyz")
+    assert result["ok"] is True
+    assert result["key"] == "llm_api_key"
+    assert result["value"] != "sk-secret-xyz"
+    assert result["value"] == "***"
+
+
+def test_set_config_caldav_password_masked_in_response(server_env):
+    """set_config masks caldav_password in response."""
+    from timeopt.server import set_config
+    result = set_config(key="caldav_password", value="hunter2")
+    assert result["ok"] is True
+    assert result["value"] != "hunter2"
+    assert result["value"] == "***"
+
+
+def test_set_config_non_sensitive_key_shows_value_in_response(server_env):
+    """set_config shows actual value for non-sensitive keys."""
+    from timeopt.server import set_config
+    result = set_config(key="day_start", value="08:00")
+    assert result["ok"] is True
+    assert result["value"] == "08:00"
+
+
 # ---------------------------------------------------------------------------
 # Block 8: fuzzy_match_tasks edge cases
 # ---------------------------------------------------------------------------
@@ -636,3 +692,111 @@ def test_fuzzy_match_very_short_query(server_env):
     # Single character query should not raise
     result = fuzzy_match_tasks(query="a")
     assert isinstance(result["candidates"], list)
+
+
+def test_get_caldav_uses_config_defaults(server_env):
+    """_get_caldav() reads url/calendars from config, not inline fallbacks."""
+    from unittest.mock import patch, MagicMock
+    from timeopt import db, core
+    conn = db.get_connection(server_env)
+    core.set_config(conn, "caldav_url", "https://custom.caldav.example.com")
+    core.set_config(conn, "caldav_username", "user")
+    core.set_config(conn, "caldav_password", "pass")
+    conn.close()
+
+    with patch("timeopt.server.CalDAVClient") as mock_cls:
+        mock_cls.return_value = MagicMock()
+        from timeopt.server import _get_caldav, _open_conn
+        c = _open_conn()
+        _get_caldav(c)
+        c.close()
+        call_kwargs = mock_cls.call_args[1]
+        assert call_kwargs["url"] == "https://custom.caldav.example.com"
+
+
+def test_resolve_calendar_reference_with_date_range(mock_caldav):
+    """Passing date_range dict with start/end verifies get_events is called and match is returned."""
+    from timeopt.server import resolve_calendar_reference
+    mock_caldav.get_events.return_value = [
+        CalendarEvent(uid="uid-team-sync", title="Team sync",
+                      start="2026-04-05T09:00:00Z",
+                      end="2026-04-05T10:00:00Z"),
+    ]
+    result = resolve_calendar_reference(
+        label="team sync",
+        date_range={"start": "2026-04-01", "end": "2026-04-10"}
+    )
+    # Verify get_events was called
+    mock_caldav.get_events.assert_called_once()
+    # Verify result contains the matched event
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["uid"] == "uid-team-sync"
+    assert result["candidates"][0]["score"] > 50
+
+
+def test_resolve_calendar_reference_date_range_sets_window(mock_caldav):
+    """Verify that date_range start/end correctly sets get_events call parameters."""
+    from timeopt.server import resolve_calendar_reference
+    mock_caldav.get_events.return_value = []
+
+    # Call with start="2026-04-01", end="2026-04-11" (10 days apart)
+    resolve_calendar_reference(
+        label="some event",
+        date_range={"start": "2026-04-01", "end": "2026-04-11"}
+    )
+
+    # Verify get_events was called with correct start date and days parameter
+    call_args = mock_caldav.get_events.call_args
+    assert call_args is not None
+    # First positional arg should be the start date in ISO format
+    assert call_args[0][0] == "2026-04-01"
+    # days keyword arg should be (end - start).days = 10
+    assert call_args[1]["days"] == 10
+
+
+def test_sync_calendar_caldav_error_returns_structured_error(server_env):
+    """sync_calendar handles transient CalDAV errors gracefully (get_events returns [])."""
+    from timeopt.server import sync_calendar
+    mock_caldav = MagicMock()
+    # get_events never raises — it catches exceptions and returns []
+    mock_caldav.get_events.return_value = []
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        result = sync_calendar(date_range_days=7)
+    # With no events, sync succeeds with empty results
+    assert result.get("ok") is True
+    assert result.get("updated") == []
+    assert result.get("resolved") == []
+
+
+def test_push_calendar_blocks_planner_error_returns_structured_error(server_env):
+    """push_calendar_blocks wraps planner exceptions and returns structured error."""
+    from timeopt.server import push_calendar_blocks
+    mock_caldav = MagicMock()
+    mock_caldav.create_event.side_effect = RuntimeError("CalDAV write failed")
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        result = push_calendar_blocks(
+            blocks=[{"task_id": "fake-id", "display_id": "#1-t", "title": "T",
+                     "start": "2026-04-10T09:00:00", "duration_min": 60, "quadrant": "Q1"}],
+            date="2026-04-10",
+        )
+    assert result.get("ok") is False
+    assert "error" in result
+
+
+def test_get_config_unknown_key_returns_ok_false(server_env):
+    from timeopt import server
+    result = server.get_config(key="completely_unknown_key_xyz")
+    assert result.get("ok") is False
+    assert "error" in result
+
+
+def test_resolve_calendar_reference_keyerror_for_config_uses_default(server_env):
+    """resolve_calendar_reference must not crash if get_config raises KeyError."""
+    from timeopt import server as srv
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        with patch("timeopt.core.get_config", side_effect=KeyError("calendar_fuzzy_min_score")):
+            result = srv.resolve_calendar_reference(label="meeting")
+    assert "candidates" in result
+    assert result.get("ok") is not False  # should not be an error response

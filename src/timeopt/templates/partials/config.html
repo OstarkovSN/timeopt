@@ -1,0 +1,66 @@
+<style>
+  h2.page-title { font-size: 1.3rem; font-weight: 600; margin-bottom: 1.75rem; color: #111; }
+  .config-section { margin-bottom: 2rem; background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; overflow: hidden; }
+  .config-section-header {
+    font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: #6b7280; padding: 0.75rem 1rem;
+    background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+  }
+  .field-row { display: flex; align-items: center; gap: 1rem; padding: 0.625rem 1rem; border-bottom: 1px solid #f3f4f6; }
+  .field-row:last-child { border-bottom: none; }
+  .field-label { width: 220px; font-size: 0.8rem; color: #374151; font-family: monospace; flex-shrink: 0; }
+  .field-input {
+    flex: 1; max-width: 380px; padding: 0.375rem 0.625rem;
+    border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.8rem;
+    outline: none; transition: border-color 0.15s;
+  }
+  .field-input:focus { border-color: #7c83fd; }
+  .field-status { font-size: 0.7rem; min-width: 70px; color: #9ca3af; }
+  .field-status.saved { color: #22c55e; }
+  .field-status.error { color: #ef4444; }
+</style>
+
+<h2 class="page-title">Configuration</h2>
+
+{% macro render_field(key) %}
+{% set value = config.get(key) %}
+{% include "partials/config_field.html" %}
+{% endmacro %}
+
+<div class="config-section">
+  <div class="config-section-header">LLM</div>
+  {{ render_field("llm_api_key") }}
+  {{ render_field("llm_model") }}
+  {{ render_field("llm_max_tokens") }}
+  {{ render_field("llm_base_url") }}
+</div>
+
+<div class="config-section">
+  <div class="config-section-header">CalDAV</div>
+  {{ render_field("caldav_url") }}
+  {{ render_field("caldav_username") }}
+  {{ render_field("caldav_password") }}
+  {{ render_field("caldav_read_calendars") }}
+  {{ render_field("caldav_tasks_calendar") }}
+</div>
+
+<div class="config-section">
+  <div class="config-section-header">Scheduling</div>
+  {{ render_field("day_start") }}
+  {{ render_field("day_end") }}
+  {{ render_field("break_duration_min") }}
+  {{ render_field("default_effort") }}
+  {{ render_field("effort_small_min") }}
+  {{ render_field("effort_medium_min") }}
+  {{ render_field("effort_large_min") }}
+</div>
+
+<div class="config-section">
+  <div class="config-section-header">Behavior</div>
+  {{ render_field("hide_done_after_days") }}
+  {{ render_field("fuzzy_match_min_score") }}
+  {{ render_field("fuzzy_match_ask_gap") }}
+  {{ render_field("delegation_max_tool_calls") }}
+  {{ render_field("calendar_fuzzy_min_score") }}
+  {{ render_field("ui_port") }}
+</div>

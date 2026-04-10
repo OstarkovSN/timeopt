@@ -22,13 +22,23 @@ _CONFIG_DEFAULTS: dict[str, str] = {
     "fuzzy_match_min_score": "80",
     "fuzzy_match_ask_gap": "10",
     "delegation_max_tool_calls": "10",
+    "caldav_url": "https://caldav.yandex.ru",
+    "caldav_read_calendars": "all",
+    "caldav_tasks_calendar": "Timeopt",
+    "llm_max_tokens": "4096",
+    "calendar_fuzzy_min_score": "50",
+    "ui_port": "7749",
 }
 
 # Optional keys — no default, return None if unset
 _CONFIG_OPTIONAL: frozenset[str] = frozenset({
-    "caldav_url", "caldav_username", "caldav_password",
-    "caldav_read_calendars", "caldav_tasks_calendar",
+    "caldav_username", "caldav_password",
     "llm_base_url", "llm_api_key", "llm_model",
+})
+
+# Keys whose values should be masked in logs
+_SENSITIVE_CONFIG_KEYS: frozenset[str] = frozenset({
+    "llm_api_key", "caldav_password",
 })
 
 
@@ -55,7 +65,8 @@ def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
         (key, value),
     )
     conn.commit()
-    logger.info("config set: %s = %s", key, value)
+    log_value = "***" if key in _SENSITIVE_CONFIG_KEYS else value
+    logger.info("config set: %s = %s", key, log_value)
 
 
 def get_all_config(conn: sqlite3.Connection) -> dict[str, str | None]:
@@ -237,7 +248,13 @@ def list_tasks(
     """
     _auto_classify(conn)
 
-    hide_days = int(get_config(conn, "hide_done_after_days"))
+    try:
+        hide_days = int(get_config(conn, "hide_done_after_days"))
+    except ValueError:
+        logger.warning(
+            "list_tasks: hide_done_after_days is not a valid integer, using default 7"
+        )
+        hide_days = 7
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=hide_days)
     ).isoformat()
@@ -378,6 +395,7 @@ def _extract_event_label(fragment: str) -> str | None:
 def resolve_calendar_reference(
     label: str,
     events: list,
+    min_score: int = 50,
 ) -> dict | None:
     """
     Fuzzy-match a textual event label against a list of CalendarEvent objects.
@@ -390,7 +408,7 @@ def resolve_calendar_reference(
     if results is None:
         return None
     title, score, idx = results
-    if score < 50:
+    if score < min_score:
         return None
     ev = events[idx]
     return {"uid": ev.uid, "title": ev.title, "start": ev.start, "end": ev.end, "score": score}
@@ -527,12 +545,19 @@ def try_resolve_unresolved(conn: sqlite3.Connection, events: list) -> list[dict]
     Returns list of {display_id, status: "resolved" | "still_unresolved"}.
     """
     unresolved = get_unresolved_tasks(conn)
+    try:
+        min_score = int(get_config(conn, "calendar_fuzzy_min_score"))
+    except (ValueError, KeyError):
+        logger.warning(
+            "try_resolve_unresolved: calendar_fuzzy_min_score is not a valid integer, using default 50"
+        )
+        min_score = 50
     results = []
     for task in unresolved:
         label = task["due_event_label"]
         if not label:
             continue
-        match = resolve_calendar_reference(label, events)
+        match = resolve_calendar_reference(label, events, min_score=min_score)
         if match:
             event_start = datetime.fromisoformat(
                 match["start"].replace("Z", "+00:00")

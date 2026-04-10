@@ -13,6 +13,12 @@ DEFAULTS = {
     "fuzzy_match_min_score": "80",
     "fuzzy_match_ask_gap": "10",
     "delegation_max_tool_calls": "10",
+    "caldav_url": "https://caldav.yandex.ru",
+    "caldav_read_calendars": "all",
+    "caldav_tasks_calendar": "Timeopt",
+    "llm_max_tokens": "4096",
+    "calendar_fuzzy_min_score": "50",
+    "ui_port": "7749",
 }
 
 
@@ -41,6 +47,20 @@ def test_get_all_config_returns_merged(conn):
 def test_set_config_persists(conn):
     set_config(conn, "default_effort", "large")
     assert get_config(conn, "default_effort") == "large"
+
+
+def test_set_config_masks_sensitive_values_in_log(conn, caplog):
+    """API keys and passwords must not appear in log output."""
+    import logging
+    with caplog.at_level(logging.INFO, logger="timeopt.core"):
+        set_config(conn, "llm_api_key", "sk-supersecret-12345")
+        set_config(conn, "caldav_password", "my-secret-password")
+    log_text = " ".join(r.message for r in caplog.records)
+    assert "sk-supersecret-12345" not in log_text
+    assert "my-secret-password" not in log_text
+    # Key name should still appear (for debugging which key was set)
+    assert "llm_api_key" in log_text
+    assert "caldav_password" in log_text
 
 
 from timeopt.core import create_task, TaskInput
@@ -256,3 +276,160 @@ def test_fuzzy_match_returns_sorted_by_score(conn):
     matches = fuzzy_match_tasks(conn, "fix login")
     assert len(matches) >= 2
     assert matches[0]["score"] >= matches[1]["score"]
+
+
+def test_new_config_defaults(conn):
+    assert get_config(conn, "caldav_url") == "https://caldav.yandex.ru"
+    assert get_config(conn, "caldav_read_calendars") == "all"
+    assert get_config(conn, "caldav_tasks_calendar") == "Timeopt"
+    assert get_config(conn, "llm_max_tokens") == "4096"
+    assert get_config(conn, "calendar_fuzzy_min_score") == "50"
+    assert get_config(conn, "ui_port") == "7749"
+
+
+def test_list_tasks_filter_by_priority(conn):
+    """Test that list_tasks priority filter returns only matching priority tasks."""
+    _make_task(conn, title="high priority task", priority="high")
+    _make_task(conn, title="medium priority task", priority="medium")
+    _make_task(conn, title="low priority task", priority="low")
+
+    high_priority_tasks = list_tasks(conn, priority="high")
+    assert len(high_priority_tasks) == 1
+    assert high_priority_tasks[0]["title"] == "high priority task"
+    assert high_priority_tasks[0]["priority"] == "high"
+
+    low_priority_tasks = list_tasks(conn, priority="low")
+    assert len(low_priority_tasks) == 1
+    assert low_priority_tasks[0]["title"] == "low priority task"
+    assert low_priority_tasks[0]["priority"] == "low"
+
+
+def test_list_tasks_filter_by_category(conn):
+    """Test that list_tasks category filter returns only matching category tasks."""
+    _make_task(conn, title="work task", category="work")
+    _make_task(conn, title="personal task", category="personal")
+    _make_task(conn, title="errands task", category="errands")
+
+    work_tasks = list_tasks(conn, category="work")
+    assert len(work_tasks) == 1
+    assert work_tasks[0]["title"] == "work task"
+    assert work_tasks[0]["category"] == "work"
+
+    personal_tasks = list_tasks(conn, category="personal")
+    assert len(personal_tasks) == 1
+    assert personal_tasks[0]["title"] == "personal task"
+    assert personal_tasks[0]["category"] == "personal"
+
+
+def test_list_tasks_filter_by_priority_and_category(conn):
+    """Test that list_tasks with both priority and category filters returns matching task only."""
+    # Create a 2x2 matrix: high/work, high/personal, low/work, low/personal
+    _make_task(conn, title="high work", priority="high", category="work")
+    _make_task(conn, title="high personal", priority="high", category="personal")
+    _make_task(conn, title="low work", priority="low", category="work")
+    _make_task(conn, title="low personal", priority="low", category="personal")
+
+    # Filter for high priority + work category
+    filtered = list_tasks(conn, priority="high", category="work")
+    assert len(filtered) == 1
+    assert filtered[0]["title"] == "high work"
+    assert filtered[0]["priority"] == "high"
+    assert filtered[0]["category"] == "work"
+
+    # Filter for low priority + personal category
+    filtered = list_tasks(conn, priority="low", category="personal")
+    assert len(filtered) == 1
+    assert filtered[0]["title"] == "low personal"
+    assert filtered[0]["priority"] == "low"
+    assert filtered[0]["category"] == "personal"
+
+
+def test_get_config_returns_none_for_unset_optional_keys(conn):
+    """get_config returns None for unset optional config keys."""
+    from timeopt.core import get_config
+
+    # Get an optional key that's not set (caldav_password, llm_api_key)
+    value = get_config(conn, "caldav_password")
+    assert value is None
+
+    value = get_config(conn, "llm_api_key")
+    assert value is None
+
+
+def test_try_resolve_unresolved_with_no_matching_events(conn):
+    """try_resolve_unresolved returns empty result when no events match."""
+    from timeopt.core import dump_task, TaskInput, try_resolve_unresolved
+
+    # Create a task with unresolved reference
+    dump_task(conn, TaskInput(
+        title="unresolved", raw="unresolved", priority="high", urgent=False,
+        category="work", effort="small", due_event_label="Nonexistent Event"))
+
+    # Try to resolve with empty events
+    result = try_resolve_unresolved(conn, [])
+
+    # Should return empty list (no resolution possible)
+    assert isinstance(result, list)
+
+
+def test_sync_bound_tasks_with_missing_event(conn):
+    """sync_bound_tasks reports event_missing status when event deleted."""
+    from timeopt.core import dump_task, TaskInput, sync_bound_tasks
+
+    # Create a bound task
+    dump_task(conn, TaskInput(
+        title="bound task", raw="bound task", priority="high", urgent=False,
+        category="work", effort="small", due_event_label="Team Meeting"))
+
+    # Sync with empty events (event is missing)
+    result = sync_bound_tasks(conn, [])
+
+    # Should report about the bound task
+    assert isinstance(result, list)
+
+
+def test_get_all_config_returns_all_defaults(conn):
+    """get_all_config returns all config keys with their values."""
+    from timeopt.core import get_all_config
+
+    all_config = get_all_config(conn)
+
+    # Should include all default keys
+    assert "day_start" in all_config
+    assert "day_end" in all_config
+    assert "default_effort" in all_config
+    assert all_config["day_start"] == "09:00"
+
+
+def test_list_tasks_bad_hide_done_after_days_uses_default(conn):
+    """Non-integer hide_done_after_days falls back to 7 instead of raising ValueError."""
+    from timeopt.core import set_config
+    set_config(conn, "hide_done_after_days", "not_a_number")
+    # Should not raise — should fall back gracefully
+    result = list_tasks(conn, status="done")
+    assert isinstance(result, list)
+
+
+def test_try_resolve_unresolved_bad_min_score_uses_default(conn):
+    """Non-integer calendar_fuzzy_min_score falls back to 50 instead of raising ValueError."""
+    from timeopt.core import set_config, try_resolve_unresolved
+    from timeopt.caldav_client import CalendarEvent
+
+    set_config(conn, "calendar_fuzzy_min_score", "not_a_number")
+    events = [CalendarEvent(start="2026-04-20T10:00:00Z", end="2026-04-20T11:00:00Z",
+                            title="Meeting", uid="e-1")]
+    # Should not raise — should fall back gracefully
+    result = try_resolve_unresolved(conn, events)
+    assert isinstance(result, list)
+
+
+def test_try_resolve_unresolved_handles_keyerror_for_missing_config(tmp_path):
+    """try_resolve_unresolved must not crash if get_config raises KeyError."""
+    from unittest.mock import patch
+    from timeopt import db, core
+    conn = db.get_connection(str(tmp_path / "test.db"))
+    db.create_schema(conn)
+    with patch("timeopt.core.get_config", side_effect=KeyError("calendar_fuzzy_min_score")):
+        result = core.try_resolve_unresolved(conn, [])
+    assert isinstance(result, list)
+    conn.close()

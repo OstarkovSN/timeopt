@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch, PropertyMock
 from datetime import datetime, timezone
 import uuid
+import logging
 import pytest
 from timeopt.caldav_client import CalDAVClient, CalendarEvent
 
@@ -205,8 +206,8 @@ def test_create_event_save_event_failure_propagates():
             )
 
 
-def test_delete_event_swallows_failures_gracefully():
-    """When delete_event encounters exceptions, they should be logged but not re-raised."""
+def test_delete_event_raises_runtime_error_on_failure_not_found():
+    """When delete_event encounters exceptions, they should be logged and re-raised as RuntimeError."""
     with patch("timeopt.caldav_client.caldav") as mock_caldav:
         mock_client = MagicMock()
         mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -229,8 +230,9 @@ def test_delete_event_swallows_failures_gracefully():
             tasks_calendar="Timeopt",
         )
 
-        # Should not raise
-        client.delete_event("uid-missing")
+        # Should raise RuntimeError
+        with pytest.raises(RuntimeError, match="failed to delete event uid=uid-missing"):
+            client.delete_event("uid-missing")
 
 
 def test_ensure_tasks_calendar_creation_failure_propagates():
@@ -312,10 +314,10 @@ def test_create_event_uid_fallback():
         type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
         mock_principal.calendars.return_value = [mock_tasks_cal]
 
-        # Create event that raises when accessing uid
+        # Create event that raises AttributeError when accessing uid
         created_event = MagicMock()
         uid_mock = MagicMock()
-        type(uid_mock).value = PropertyMock(side_effect=Exception("no uid"))
+        type(uid_mock).value = PropertyMock(side_effect=ValueError("no uid"))
         created_event.instance.vevent.uid = uid_mock
         mock_tasks_cal.save_event.return_value = created_event
 
@@ -336,3 +338,131 @@ def test_create_event_uid_fallback():
         # Should return the locally-generated UUID (not the server one)
         # Verify it's a valid UUID format
         uuid.UUID(uid)
+
+
+def test_get_events_auth_failure_logs_exception(caplog):
+    """Auth error should be logged with traceback (logger.exception), not just a warning."""
+    import logging
+    client = CalDAVClient(
+        url="https://caldav.example.com",
+        username="user",
+        password="wrong",
+    )
+    mock_caldav_module = MagicMock()
+    mock_caldav_module.DAVClient.return_value.__enter__.return_value.principal.side_effect = (
+        Exception("401 Unauthorized")
+    )
+    with patch("timeopt.caldav_client.caldav", mock_caldav_module):
+        with caplog.at_level(logging.ERROR, logger="timeopt.caldav_client"):
+            result = client.get_events("2026-04-10")
+    assert result == []
+    assert any(r.exc_info is not None for r in caplog.records), \
+        "Expected logger.exception (with traceback), got logger.warning (no traceback)"
+
+
+def test_get_events_when_caldav_not_installed_returns_empty():
+    """If caldav package is absent (caldav=None), return [] with a clear log."""
+    client = CalDAVClient(url="https://caldav.example.com", username="u", password="p")
+    with patch("timeopt.caldav_client.caldav", None):
+        result = client.get_events("2026-04-10")
+    assert result == []
+
+
+def test_create_event_wraps_error_with_context():
+    """CalDAV write failure should raise RuntimeError with task title in the message."""
+    client = CalDAVClient(url="https://caldav.example.com", username="u", password="p")
+    mock_caldav_module = MagicMock()
+    mock_caldav_module.DAVClient.return_value.__enter__.return_value.principal.side_effect = (
+        Exception("503 Service Unavailable")
+    )
+    with patch("timeopt.caldav_client.caldav", mock_caldav_module):
+        with pytest.raises(RuntimeError) as exc_info:
+            client.create_event("Team standup", "2026-04-10T09:00:00", "2026-04-10T09:30:00")
+    assert "Team standup" in str(exc_info.value)
+    assert "503" in str(exc_info.value)
+
+
+def test_create_event_when_caldav_not_installed_raises_runtime_error():
+    """If caldav package is absent, raise RuntimeError immediately."""
+    client = CalDAVClient(url="https://caldav.example.com", username="u", password="p")
+    with patch("timeopt.caldav_client.caldav", None):
+        with pytest.raises(RuntimeError, match="caldav package"):
+            client.create_event("Test", "2026-04-10T09:00:00", "2026-04-10T10:00:00")
+
+
+def test_create_event_uid_fallback_is_logged(caplog):
+    """When UID extraction fails, a warning is logged with the fallback uid."""
+    import logging
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # Create event that raises AttributeError when accessing uid
+        created_event = MagicMock()
+        uid_mock = MagicMock()
+        type(uid_mock).value = PropertyMock(side_effect=ValueError("no uid"))
+        created_event.instance.vevent.uid = uid_mock
+        mock_tasks_cal.save_event.return_value = created_event
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="timeopt.caldav_client"):
+            uid = client.create_event(
+                title="Event without server UID",
+                start="2026-03-28T10:00:00+00:00",
+                end="2026-03-28T11:00:00+00:00",
+            )
+
+        # Verify warning was logged with event title and uuid
+        assert any("Event without server UID" in r.message for r in caplog.records), \
+            f"Expected title in warning, got: {[r.message for r in caplog.records]}"
+        assert any(uid in r.message for r in caplog.records), \
+            f"Expected uid in warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_delete_event_raises_runtime_error_on_failure(caplog):
+    """delete_event raises RuntimeError when deletion fails, allowing callers to detect and handle."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # Mock event deletion to raise an error
+        mock_event = MagicMock()
+        mock_event.delete.side_effect = RuntimeError("CalDAV server error: 403 Forbidden")
+        mock_tasks_cal.event_by_uid.return_value = mock_event
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        with caplog.at_level(logging.ERROR, logger="timeopt.caldav_client"):
+            with pytest.raises(RuntimeError, match="failed to delete event"):
+                client.delete_event("uid-to-delete")
+
+        # Verify error was logged
+        assert any("failed to delete event" in r.message for r in caplog.records)

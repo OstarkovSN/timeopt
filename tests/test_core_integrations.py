@@ -128,3 +128,17 @@ def test_dump_tasks_saves_batch(conn):
     assert len(display_ids) == 2
     count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
     assert count == 2
+
+
+def test_resolve_calendar_reference_respects_min_score(conn):
+    events = [
+        CalendarEvent(title="Team sync", start="2026-04-02T09:00:00Z",
+                      end="2026-04-02T10:00:00Z", uid="uid-1"),
+    ]
+    # Low min_score — "sync" should match "Team sync"
+    result_low = resolve_calendar_reference("sync", events, min_score=10)
+    assert result_low is not None
+
+    # High min_score — "sync" alone won't score high enough against "Team sync"
+    result_high = resolve_calendar_reference("sync", events, min_score=95)
+    assert result_high is None
