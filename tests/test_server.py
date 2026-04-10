@@ -714,3 +714,18 @@ def test_sync_calendar_caldav_error_returns_structured_error(server_env):
         result = sync_calendar(date_range_days=7)
     assert result.get("ok") is False
     assert "error" in result
+
+
+def test_push_calendar_blocks_planner_error_returns_structured_error(server_env):
+    """push_calendar_blocks wraps planner exceptions and returns structured error."""
+    from timeopt.server import push_calendar_blocks
+    mock_caldav = MagicMock()
+    mock_caldav.create_event.side_effect = RuntimeError("CalDAV write failed")
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        result = push_calendar_blocks(
+            blocks=[{"task_id": "fake-id", "display_id": "#1-t", "title": "T",
+                     "start": "2026-04-10T09:00:00", "duration_min": 60, "quadrant": "Q1"}],
+            date="2026-04-10",
+        )
+    assert result.get("ok") is False
+    assert "error" in result

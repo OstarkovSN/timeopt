@@ -338,7 +338,11 @@ def push_calendar_blocks(blocks: list, date: Optional[str] = None) -> dict:
         if not caldav:
             return {"ok": False, "error": "CalDAV not configured"}
         target = _parse_date(date).isoformat()
-        planner.push_calendar_blocks(conn, {"blocks": blocks}, target, caldav)
+        try:
+            planner.push_calendar_blocks(conn, {"blocks": blocks}, target, caldav)
+        except Exception as e:
+            logger.exception("push_calendar_blocks: failed")
+            return {"ok": False, "error": str(e)}
         return {"ok": True, "pushed": len(blocks)}
     finally:
         conn.close()
