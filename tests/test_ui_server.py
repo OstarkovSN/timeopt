@@ -203,8 +203,7 @@ def test_post_config_unknown_key_error_message_not_double_quoted(ui_env):
     resp = client.post("/api/config/totally_nonexistent_key_xyz", data={"value": "bar"})
     assert resp.status_code == 200
     # str(KeyError(...)) wraps the message in extra quotes — assert that pattern is absent
-    assert "\"'Unknown config key:" not in resp.text
-    assert "'Unknown config key:" not in resp.text or "\"'Unknown" not in resp.text
+    assert "'Unknown config key:" not in resp.text
 
 
 def test_get_config_api_does_not_expose_sensitive_values(ui_env):
@@ -225,3 +224,20 @@ def test_get_config_api_does_not_expose_sensitive_values(ui_env):
     # Should be masked
     assert body.get("llm_api_key") == "***"
     assert body.get("caldav_password") == "***"
+
+
+def test_post_config_sensitive_key_with_mask_placeholder_does_not_overwrite(ui_env):
+    """POST with value='***' for a sensitive key must NOT save '***' to DB."""
+    conn = db.get_connection(ui_env)
+    core.set_config(conn, "llm_api_key", "sk-real-key-12345")
+    conn.close()
+    from fastapi.testclient import TestClient
+    from timeopt.ui_server import app
+    client = TestClient(app)
+    resp = client.post("/api/config/llm_api_key", data={"value": "***"})
+    assert resp.status_code == 200
+    # Verify DB still has the real value
+    conn2 = db.get_connection(ui_env)
+    val = core.get_config(conn2, "llm_api_key")
+    conn2.close()
+    assert val == "sk-real-key-12345"

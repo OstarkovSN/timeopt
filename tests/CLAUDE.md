@@ -32,6 +32,14 @@ def server_env(tmp_path):
 
 Do NOT use the `conn` fixture in server/CLI tests — server tools open their own connection via `_open_conn()`.
 
+## Click CLI Testing
+
+**CliRunner exception handling:** Use `result.exit_code != 0` to detect command errors, not just `result.exception` presence. CliRunner captures exceptions in `result.exception` when exit code is non-zero; checking exit code is more reliable for distinguishing normal failure from success.
+
+**Setup wizard test sequences:** Skip all prompts (yes/no) with "n", but provider choices (e.g., "1" for Anthropic) and custom text (e.g., API key) are required inputs that advance multi-part wizard flows — omitting them causes the wizard to fail validation rather than proceed.
+
+**OSError from uvicorn.run:** Wrap with `except OSError as e:` to catch socket binding failures; "Address already in use" is the standard message. Catch OSError specifically to avoid masking unexpected exceptions. Server startup errors may also include KeyboardInterrupt and other signals.
+
 ## Mock Conventions
 
 **CalDAV:** Patch at `timeopt.server._get_caldav`, not at the `caldav` library level. Return a `MagicMock` with `.get_events()`, `.create_event()`, `.delete_event()` methods.

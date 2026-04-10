@@ -275,7 +275,7 @@ def resolve_calendar_reference(label: str, date_range: Optional[dict] = None) ->
         events_raw = caldav.get_events(start_date.isoformat(), days=days)
         try:
             min_score = int(core.get_config(conn, "calendar_fuzzy_min_score"))
-        except ValueError:
+        except (ValueError, KeyError):
             logger.warning(
                 "resolve_calendar_reference: calendar_fuzzy_min_score is not an integer, using default 50"
             )

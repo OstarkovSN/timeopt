@@ -788,3 +788,15 @@ def test_get_config_unknown_key_returns_ok_false(server_env):
     result = server.get_config(key="completely_unknown_key_xyz")
     assert result.get("ok") is False
     assert "error" in result
+
+
+def test_resolve_calendar_reference_keyerror_for_config_uses_default(server_env):
+    """resolve_calendar_reference must not crash if get_config raises KeyError."""
+    from timeopt import server as srv
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = []
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        with patch("timeopt.core.get_config", side_effect=KeyError("calendar_fuzzy_min_score")):
+            result = srv.resolve_calendar_reference(label="meeting")
+    assert "candidates" in result
+    assert result.get("ok") is not False  # should not be an error response

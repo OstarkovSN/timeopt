@@ -78,6 +78,11 @@ async def set_config_field(request: Request, key: str, value: str = Form("")):
     conn = _open_conn()
     try:
         try:
+            if key in core._SENSITIVE_CONFIG_KEYS and value == "***":
+                return templates.TemplateResponse(
+                    request, "partials/config_field.html",
+                    {"key": key, "value": "***", "status": "saved"},
+                )
             core.set_config(conn, key, value)
             display_value = "***" if key in core._SENSITIVE_CONFIG_KEYS else value
             return templates.TemplateResponse(
@@ -106,10 +111,7 @@ async def set_config_field(request: Request, key: str, value: str = Form("")):
 async def get_all_config_api():
     conn = _open_conn()
     try:
-        cfg = core.get_all_config(conn)
-        for k in core._SENSITIVE_CONFIG_KEYS:
-            if cfg.get(k):
-                cfg[k] = "***"
+        cfg = _mask_sensitive(core.get_all_config(conn))
         return JSONResponse(content=cfg)
     except Exception:
         logger.exception("get_all_config_api: failed")

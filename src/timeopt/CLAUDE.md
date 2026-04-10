@@ -25,17 +25,20 @@
 - `mark_done` / `mark_delegated` accept either UUID or display_id (queries `WHERE id=? OR display_id=?`)
 - `get_task`, `update_task_notes`, `return_to_pending` — UUID only, raise `ValueError` if not found
 - Always use `fuzzy_match_tasks` → `task_id` field before calling UUID-only functions
+- `core.dump_task()` returns a `display_id` string (e.g., `#1-task-name`), not the UUID — use DB queries or `fuzzy_match_tasks` to get the UUID for downstream operations
 
 **CalDAV graceful degradation:**
 - `_get_caldav(conn)` returns `None` when `caldav_username` or `caldav_password` is unset
 - All server tools that need CalDAV must check `if not caldav: return {..., "error": "..."}` or `"warning"` for read-only tools
 - Never let a missing CalDAV config propagate as an exception
+- Config value parsing (e.g., `int(config["calendar_fuzzy_min_score"])`) can raise unhandled exceptions even after `if not caldav` check passes — validate config types before accessing them
 
 **Config errors:**
 - `core.get_config` raises `KeyError` (not `ValueError`) for unknown keys
 - `server.get_config` catches `KeyError` separately — don't change to `ValueError`
 - Optional config keys (`caldav_username`, `caldav_password`, `llm_base_url`, `llm_api_key`, `llm_model`) return `None` when unset — not a KeyError
 - `caldav_url`, `caldav_read_calendars`, `caldav_tasks_calendar` have defaults (in `_CONFIG_DEFAULTS`) — they return default values, not None
+- Integer-typed config keys `hide_done_after_days` and `calendar_fuzzy_min_score` are accessed via bare `int(get_config(...))` in `list_tasks` and `try_resolve_unresolved` — wrap with try-except ValueError, fall back to 7 and 50 respectively
 
 **push_calendar_blocks transaction order:**
 1. Collect old UIDs from DB (before changes)
@@ -49,12 +52,18 @@
 - A task that exactly fills the remaining slot will be **deferred** if `break_duration_min > 0`
 - This is intentional behavior; tests should assert it explicitly
 
+**Effort mapping config validation:**
+- `_effort_minutes(effort, config)` builds mapping dict eagerly by calling `_safe_int()` on **all 4 keys** (small, medium, large, fallback) before `.get()` — not lazy
+- All effort_*_min config keys must be guarded with try-except, even if the config value won't be used (bad values logged as warnings but don't crash)
+
 **`_parse_json_array` uses greedy regex `\[[\s\S]*\]`:**
 - Matches from first `[` to last `]` — if LLM returns two JSON arrays, it spans both
 - `json.JSONDecodeError` (subclass of `ValueError`) bubbles up to CLI as unhandled exception
 
 ## Key Patterns
 
-**Every server tool:** opens conn in `_open_conn()`, wraps mutations in `try/except ValueError → {"error": str(e)}`, closes in `finally`.
+**Every server tool:** opens conn in `_open_conn()`, wraps mutations in `try/except ValueError → {"error": str(e)}`, closes in `finally`. Error responses must include `"ok": False` for consistency — callers use `.get("ok")` to distinguish success from failure. Config-related tools that can raise `KeyError` (not `ValueError`) must catch and convert separately.
 
-**CalendarEvent objects:** `caldav_client` returns `CalendarEvent` dataclass objects (`.uid`, `.title`, `.start`, `.end`). `core.sync_bound_tasks`, `core.try_resolve_unresolved`, and planner functions all expect `list[CalendarEvent]` — they use attribute access, not dict access. Do NOT convert to dicts at the server boundary. Exception: `server.get_plan_proposal` converts events to `list[dict]` for the planner, which expects `{start, end, title}` dicts. All `core.*` functions take raw CalendarEvent objects.
+**Masking sensitive config in API responses:** When returning config dicts (e.g., `ui_server.get_all_config_api`), iterate `core._SENSITIVE_CONFIG_KEYS` and assign `"***"` only if the key is present and truthy — use `if cfg.get(k): cfg[k] = "***"` to avoid overwriting `None` values for unset optional keys.
+
+**CalendarEvent objects:** `caldav_client` returns `CalendarEvent` dataclass objects (`.uid`, `.title`, `.start`, `.end`). `core.sync_bound_tasks`, `core.try_resolve_unresolved`, and planner functions all expect `list[CalendarEvent]` — they use attribute access, not dict access. Do NOT convert to dicts anywhere (server, CLI, or tests). Exception: `server.get_plan_proposal` converts events to `list[dict]` for the planner, which expects `{start, end, title}` dicts. All `core.*` functions take raw CalendarEvent objects. This applies to CLI as well — dict comprehensions in CLI sync commands must preserve CalendarEvent objects passed to core functions.

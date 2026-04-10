@@ -381,11 +381,9 @@ def plan(plan_date):
         target = plan_date or _date_type.today().isoformat()
         events = []
         if caldav:
-            try:
-                raw_events = caldav.get_events(target, days=1)
-                events = [{"start": e.start, "end": e.end, "title": e.title} for e in raw_events]
-            except Exception:
-                logger.exception("plan: CalDAV unavailable, proceeding without calendar")
+            # get_events never raises — degrades to [] internally on CalDAV failure
+            raw_events = caldav.get_events(target, days=1)
+            events = [{"start": e.start, "end": e.end, "title": e.title} for e in raw_events]
 
         proposal = planner.get_plan_proposal(conn, events, target)
         blocks = proposal.get("blocks", [])
