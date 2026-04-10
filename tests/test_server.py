@@ -703,3 +703,14 @@ def test_resolve_calendar_reference_date_range_sets_window(mock_caldav):
     assert call_args[0][0] == "2026-04-01"
     # days keyword arg should be (end - start).days = 10
     assert call_args[1]["days"] == 10
+
+
+def test_sync_calendar_caldav_error_returns_structured_error(server_env):
+    """sync_calendar handles transient CalDAV errors gracefully."""
+    from timeopt.server import sync_calendar
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.side_effect = ConnectionError("timeout")
+    with patch("timeopt.server._get_caldav", return_value=mock_caldav):
+        result = sync_calendar(date_range_days=7)
+    assert result.get("ok") is False
+    assert "error" in result
