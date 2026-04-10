@@ -36,6 +36,11 @@ _CONFIG_OPTIONAL: frozenset[str] = frozenset({
     "llm_base_url", "llm_api_key", "llm_model",
 })
 
+# Keys whose values should be masked in logs
+_SENSITIVE_CONFIG_KEYS: frozenset[str] = frozenset({
+    "llm_api_key", "caldav_password",
+})
+
 
 def get_config(conn: sqlite3.Connection, key: str) -> str | None:
     """Return config value. Raises KeyError for unknown keys.
@@ -60,7 +65,8 @@ def set_config(conn: sqlite3.Connection, key: str, value: str) -> None:
         (key, value),
     )
     conn.commit()
-    logger.info("config set: %s = %s", key, value)
+    log_value = "***" if key in _SENSITIVE_CONFIG_KEYS else value
+    logger.info("config set: %s = %s", key, log_value)
 
 
 def get_all_config(conn: sqlite3.Connection) -> dict[str, str | None]:

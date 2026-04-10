@@ -49,6 +49,20 @@ def test_set_config_persists(conn):
     assert get_config(conn, "default_effort") == "large"
 
 
+def test_set_config_masks_sensitive_values_in_log(conn, caplog):
+    """API keys and passwords must not appear in log output."""
+    import logging
+    with caplog.at_level(logging.INFO, logger="timeopt.core"):
+        set_config(conn, "llm_api_key", "sk-supersecret-12345")
+        set_config(conn, "caldav_password", "my-secret-password")
+    log_text = " ".join(r.message for r in caplog.records)
+    assert "sk-supersecret-12345" not in log_text
+    assert "my-secret-password" not in log_text
+    # Key name should still appear (for debugging which key was set)
+    assert "llm_api_key" in log_text
+    assert "caldav_password" in log_text
+
+
 from timeopt.core import create_task, TaskInput
 
 
