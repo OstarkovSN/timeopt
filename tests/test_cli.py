@@ -502,6 +502,20 @@ def test_setup_wizard_db_error_shows_user_friendly_message(runner, cli_env):
     assert "disk full" in result.output.lower() or "saving configuration" in result.output.lower()
 
 
+def test_ui_command_uvicorn_not_installed_shows_helpful_error(cli_env, monkeypatch):
+    """If uvicorn is not installed, ui command shows a helpful error message."""
+    import sys
+    from click.testing import CliRunner
+    from timeopt.cli import cli
+    # Mark uvicorn as not importable
+    monkeypatch.delitem(sys.modules, "uvicorn", raising=False)
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["ui"])
+    assert result.exit_code != 0
+    assert "uvicorn" in result.output.lower() or "install" in result.output.lower()
+
+
 def test_tasks_filter_by_priority(runner, cli_env):
     """tasks --priority filters by priority."""
     from timeopt.cli import cli

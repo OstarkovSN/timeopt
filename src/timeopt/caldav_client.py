@@ -132,7 +132,7 @@ class CalDAVClient:
                 # Some servers return the uid directly; use our generated uid as fallback
                 try:
                     server_uid = event.instance.vevent.uid.value
-                except Exception:
+                except (AttributeError, ValueError, KeyError):
                     logger.warning(
                         "create_event: could not read server UID for '%s', using generated uid=%s",
                         title, uid

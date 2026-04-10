@@ -312,10 +312,10 @@ def test_create_event_uid_fallback():
         type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
         mock_principal.calendars.return_value = [mock_tasks_cal]
 
-        # Create event that raises when accessing uid
+        # Create event that raises AttributeError when accessing uid
         created_event = MagicMock()
         uid_mock = MagicMock()
-        type(uid_mock).value = PropertyMock(side_effect=Exception("no uid"))
+        type(uid_mock).value = PropertyMock(side_effect=ValueError("no uid"))
         created_event.instance.vevent.uid = uid_mock
         mock_tasks_cal.save_event.return_value = created_event
 
@@ -402,10 +402,10 @@ def test_create_event_uid_fallback_is_logged(caplog):
         type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
         mock_principal.calendars.return_value = [mock_tasks_cal]
 
-        # Create event that raises when accessing uid
+        # Create event that raises AttributeError when accessing uid
         created_event = MagicMock()
         uid_mock = MagicMock()
-        type(uid_mock).value = PropertyMock(side_effect=Exception("no uid"))
+        type(uid_mock).value = PropertyMock(side_effect=ValueError("no uid"))
         created_event.instance.vevent.uid = uid_mock
         mock_tasks_cal.save_event.return_value = created_event
 

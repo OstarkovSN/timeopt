@@ -497,7 +497,15 @@ def ui():
     import threading
     import time
     import webbrowser
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError:
+        click.echo(
+            "Error: uvicorn is required for the web UI. "
+            "Install it with: pip install uvicorn[standard]",
+            err=True,
+        )
+        raise SystemExit(1)
 
     conn = _open_conn()
     try:
