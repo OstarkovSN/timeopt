@@ -56,4 +56,4 @@
 
 **Every server tool:** opens conn in `_open_conn()`, wraps mutations in `try/except ValueError → {"error": str(e)}`, closes in `finally`.
 
-**CalendarEvent objects vs dicts:** `caldav_client` returns `CalendarEvent` dataclass objects. `planner.get_plan_proposal` and `core.sync_bound_tasks` expect `list[dict]` with `{start, end, title}`. Server converts: `{"start": e.start, "end": e.end, "title": e.title}` — always do this conversion at the server boundary, not inside core/planner.
+**CalendarEvent objects:** `caldav_client` returns `CalendarEvent` dataclass objects (`.uid`, `.title`, `.start`, `.end`). `core.sync_bound_tasks`, `core.try_resolve_unresolved`, and planner functions all expect `list[CalendarEvent]` — they use attribute access, not dict access. Do NOT convert to dicts at the server boundary.

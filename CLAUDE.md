@@ -18,7 +18,7 @@ TIMEOPT_DB=/tmp/test.db uv run timeopt tasks  # use isolated DB
 - `src/timeopt/planner.py` — Eisenhower classification, scheduling, CalDAV push
 - `src/timeopt/caldav_client.py` — CalDAVClient wrapper
 - `src/timeopt/llm_client.py` — AnthropicClient / OpenAICompatibleClient
-- `src/timeopt/server.py` — FastMCP server (19 tools)
+- `src/timeopt/server.py` — FastMCP server (18 tools)
 - `src/timeopt/cli.py` — click CLI
 - `commands/` — slash command markdown files (`/timeopt:dump` etc.)
 
