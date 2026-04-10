@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch, PropertyMock
 from datetime import datetime, timezone
 import uuid
+import logging
 import pytest
 from timeopt.caldav_client import CalDAVClient, CalendarEvent
 
@@ -205,8 +206,8 @@ def test_create_event_save_event_failure_propagates():
             )
 
 
-def test_delete_event_swallows_failures_gracefully():
-    """When delete_event encounters exceptions, they should be logged but not re-raised."""
+def test_delete_event_raises_runtime_error_on_failure_not_found():
+    """When delete_event encounters exceptions, they should be logged and re-raised as RuntimeError."""
     with patch("timeopt.caldav_client.caldav") as mock_caldav:
         mock_client = MagicMock()
         mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -229,8 +230,9 @@ def test_delete_event_swallows_failures_gracefully():
             tasks_calendar="Timeopt",
         )
 
-        # Should not raise
-        client.delete_event("uid-missing")
+        # Should raise RuntimeError
+        with pytest.raises(RuntimeError, match="failed to delete event uid=uid-missing"):
+            client.delete_event("uid-missing")
 
 
 def test_ensure_tasks_calendar_creation_failure_propagates():
@@ -429,3 +431,38 @@ def test_create_event_uid_fallback_is_logged(caplog):
             f"Expected title in warning, got: {[r.message for r in caplog.records]}"
         assert any(uid in r.message for r in caplog.records), \
             f"Expected uid in warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_delete_event_raises_runtime_error_on_failure(caplog):
+    """delete_event raises RuntimeError when deletion fails, allowing callers to detect and handle."""
+    with patch("timeopt.caldav_client.caldav") as mock_caldav:
+        mock_client = MagicMock()
+        mock_caldav.DAVClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_caldav.DAVClient.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_principal = MagicMock()
+        mock_client.principal.return_value = mock_principal
+
+        mock_tasks_cal = MagicMock()
+        type(mock_tasks_cal).name = PropertyMock(return_value="Timeopt")
+        mock_principal.calendars.return_value = [mock_tasks_cal]
+
+        # Mock event deletion to raise an error
+        mock_event = MagicMock()
+        mock_event.delete.side_effect = RuntimeError("CalDAV server error: 403 Forbidden")
+        mock_tasks_cal.event_by_uid.return_value = mock_event
+
+        client = CalDAVClient(
+            url="https://caldav.yandex.ru",
+            username="user",
+            password="pass",
+            read_calendars="all",
+            tasks_calendar="Timeopt",
+        )
+
+        with caplog.at_level(logging.ERROR, logger="timeopt.caldav_client"):
+            with pytest.raises(RuntimeError, match="failed to delete event"):
+                client.delete_event("uid-to-delete")
+
+        # Verify error was logged
+        assert any("failed to delete event" in r.message for r in caplog.records)

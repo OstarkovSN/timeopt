@@ -335,9 +335,12 @@ def push_calendar_blocks(
         )
         new_uids.append(uid)
 
-    # Step 3: all creates succeeded — delete old CalDAV events
+    # Step 3: all creates succeeded — delete old CalDAV events (best-effort, failures logged but don't fail the push)
     for uid in old_uids:
-        caldav_client.delete_event(uid)
+        try:
+            caldav_client.delete_event(uid)
+        except RuntimeError:
+            logger.warning("push_calendar_blocks: failed to delete old event uid=%s, continuing", uid)
 
     # Step 4: commit SQLite atomically
     conn.execute("DELETE FROM calendar_blocks WHERE plan_date=?", (date,))

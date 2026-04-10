@@ -146,7 +146,7 @@ class CalDAVClient:
         return server_uid
 
     def delete_event(self, caldav_uid: str) -> None:
-        """Delete a Timeopt calendar event by its CalDAV UID."""
+        """Delete a Timeopt calendar event by its CalDAV UID. Raises RuntimeError on failure."""
         try:
             with caldav.DAVClient(
                 url=self._url, username=self._username, password=self._password
@@ -156,5 +156,7 @@ class CalDAVClient:
                 event = tasks_cal.event_by_uid(caldav_uid)
                 event.delete()
             logger.info("deleted event uid=%s", caldav_uid)
-        except Exception:
-            logger.exception("failed to delete event uid=%s", caldav_uid)
+        except Exception as e:
+            error_msg = f"failed to delete event uid={caldav_uid}: {e}"
+            logger.exception("delete_event: %s", error_msg)
+            raise RuntimeError(error_msg) from e
