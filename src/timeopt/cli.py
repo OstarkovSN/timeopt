@@ -173,8 +173,12 @@ def config_get(key):
     conn = _open_conn()
     try:
         if key:
-            value = core.get_config(conn, key)
-            click.echo(f"{key} = {value if value is not None else '(not set)'}")
+            try:
+                value = core.get_config(conn, key)
+                click.echo(f"{key} = {value if value is not None else '(not set)'}")
+            except KeyError as e:
+                click.echo(f"Error: {e}", err=True)
+                raise SystemExit(1)
         else:
             all_cfg = core.get_all_config(conn)
             for k, v in sorted(all_cfg.items()):
@@ -294,8 +298,17 @@ def done(queries):
     """Mark tasks as done by fuzzy match. Accepts partial names."""
     conn = _open_conn()
     try:
-        min_score = int(core.get_config(conn, "fuzzy_match_min_score") or 80)
-        ask_gap = int(core.get_config(conn, "fuzzy_match_ask_gap") or 10)
+        try:
+            min_score = int(core.get_config(conn, "fuzzy_match_min_score") or 80)
+        except ValueError:
+            logger.warning("done: fuzzy_match_min_score is not a valid integer, using default 80")
+            min_score = 80
+
+        try:
+            ask_gap = int(core.get_config(conn, "fuzzy_match_ask_gap") or 10)
+        except ValueError:
+            logger.warning("done: fuzzy_match_ask_gap is not a valid integer, using default 10")
+            ask_gap = 10
 
         task_ids = []
         confirmed_dids = []

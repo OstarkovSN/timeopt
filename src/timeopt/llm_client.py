@@ -69,7 +69,11 @@ def build_llm_client(config: dict) -> LLMClient:
     Build the appropriate LLM client from config.
     Uses OpenAICompatibleClient if llm_base_url is set, else AnthropicClient.
     """
-    max_tokens = int(config.get("llm_max_tokens") or "4096")
+    try:
+        max_tokens = int(config.get("llm_max_tokens") or "4096")
+    except ValueError:
+        logger.warning("build_llm_client: llm_max_tokens is not a valid integer, using default 4096")
+        max_tokens = 4096
     if config.get("llm_base_url"):
         return OpenAICompatibleClient(
             base_url=config["llm_base_url"],

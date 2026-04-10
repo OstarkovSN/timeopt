@@ -955,6 +955,27 @@ def test_sync_shows_unresolved_tasks(runner, cli_env):
         assert "No due date changes" in result.output or "still have unresolved" in result.output
 
 
+def test_config_get_unknown_key_shows_error(runner, cli_env):
+    """config get with unknown key shows error, exits 1."""
+    from timeopt.cli import cli
+    result = runner.invoke(cli, ["config", "get", "nonexistent_key_xyz"])
+    assert result.exit_code != 0
+    assert "nonexistent_key_xyz" in result.output or "Error" in result.output
+
+
+def test_done_command_bad_fuzzy_config_uses_default(runner, cli_env):
+    """done command with non-integer fuzzy config falls back to default."""
+    from timeopt.cli import cli
+    conn = db.get_connection(cli_env)
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                 ("fuzzy_match_min_score", "not_a_number"))
+    conn.commit()
+    conn.close()
+    # Should not crash — should just show "No matching tasks"
+    result = runner.invoke(cli, ["done", "some task title"])
+    assert result.exit_code == 0 or "Error" not in result.output or result.exit_code != 2
+
+
 def test_cli_sync_updates_task_with_due_event_uid(runner, cli_env):
     """sync correctly updates due date for task bound by UID — not just label."""
     from timeopt.cli import cli

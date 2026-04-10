@@ -164,6 +164,22 @@ def test_anthropic_client_passes_max_tokens():
         assert call_kwargs["max_tokens"] == 1024
 
 
+def test_build_llm_client_bad_max_tokens_uses_default():
+    """Non-integer llm_max_tokens falls back to 4096 instead of crashing."""
+    with patch("timeopt.llm_client.anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        config = {
+            "llm_api_key": "sk-test",
+            "llm_model": "claude-3-5-haiku-20241022",
+            "llm_max_tokens": "not_a_number",
+        }
+        # Should not raise — should fall back to 4096
+        client = build_llm_client(config)
+        assert client is not None
+        assert client._max_tokens == 4096
+
+
 def test_build_llm_client_passes_max_tokens_to_anthropic():
     """build_llm_client reads llm_max_tokens from config and passes to AnthropicClient."""
     with patch("timeopt.llm_client.anthropic") as mock_anthropic:

@@ -101,12 +101,19 @@ def _parse_time(date_str: str, time_str: str) -> datetime:
 
 
 def _effort_minutes(effort: str | None, config: dict) -> int:
+    def _safe_int(val, default: int, label: str) -> int:
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            logger.warning("_effort_minutes: %s is not a valid integer, using default %d", label, default)
+            return default
+
     mapping = {
-        "small": int(config["effort_small_min"]),
-        "medium": int(config["effort_medium_min"]),
-        "large": int(config["effort_large_min"]),
+        "small": _safe_int(config["effort_small_min"], 30, "effort_small_min"),
+        "medium": _safe_int(config["effort_medium_min"], 60, "effort_medium_min"),
+        "large": _safe_int(config["effort_large_min"], 120, "effort_large_min"),
     }
-    return mapping.get(effort or "medium", int(config["effort_medium_min"]))
+    return mapping.get(effort or "medium", _safe_int(config["effort_medium_min"], 60, "effort_medium_min"))
 
 
 def _compute_free_slots(
@@ -164,7 +171,11 @@ def get_plan_proposal(
     config = get_all_config(conn)
     day_start = _parse_time(date, config["day_start"])
     day_end = _parse_time(date, config["day_end"])
-    break_min = int(config["break_duration_min"])
+    try:
+        break_min = int(config["break_duration_min"])
+    except (ValueError, TypeError):
+        logger.warning("get_plan_proposal: break_duration_min is not a valid integer, using default 10")
+        break_min = 10
 
     free_slots = _compute_free_slots(date, events, day_start, day_end)
     tasks = classify_tasks(conn)  # sorted Q1→Q4, urgency upgraded

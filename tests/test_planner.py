@@ -255,6 +255,23 @@ def test_get_plan_proposal_with_none_date(conn):
     assert "deferred" in result
 
 
+def test_get_plan_proposal_bad_effort_config_uses_default(conn):
+    """Non-integer effort_medium_min falls back to default instead of crashing."""
+    from timeopt import core
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+        ("effort_medium_min", "not_a_number")
+    )
+    conn.commit()
+    cfg = core.get_all_config(conn)
+    # Create a task so the planner has something to schedule
+    create_task(conn, _task("test task", "high", False))
+    # Should not raise — should fall back to default 60
+    result = get_plan_proposal(conn, events=[], date="2026-04-15")
+    assert "blocks" in result
+    assert "deferred" in result
+
+
 def test_push_calendar_blocks_with_empty_blocks(conn):
     """push_calendar_blocks with no blocks returns early."""
     from timeopt import planner
