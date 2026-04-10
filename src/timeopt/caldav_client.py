@@ -67,7 +67,7 @@ class CalDAVClient:
         Returns [] on connection failure (warn, don't raise).
         """
         if caldav is None:
-            logger.error("get_events: caldav package is not installed — returning empty list")
+            logger.warning("get_events: caldav package is not installed — returning empty list")
             return []
         try:
             start = datetime.fromisoformat(f"{date}T00:00:00+00:00")

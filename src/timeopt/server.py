@@ -368,11 +368,8 @@ def sync_calendar(date_range_days: int = 30) -> dict:
         caldav = _get_caldav(conn)
         if not caldav:
             return {"ok": False, "error": "CalDAV not configured"}
-        try:
-            events_raw = caldav.get_events(_date_type.today().isoformat(), days=date_range_days)
-        except Exception:
-            logger.exception("sync_calendar: CalDAV get_events failed")
-            return {"ok": False, "error": "CalDAV unavailable during sync"}
+        # get_events never raises — degrades to [] internally on failure
+        events_raw = caldav.get_events(_date_type.today().isoformat(), days=date_range_days)
         updated = core.sync_bound_tasks(conn, events_raw)
         resolved = core.try_resolve_unresolved(conn, events_raw)
         still_unresolved = core.get_unresolved_tasks(conn)
