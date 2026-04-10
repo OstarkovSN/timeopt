@@ -898,3 +898,39 @@ def test_sync_shows_unresolved_tasks(runner, cli_env):
         # With an unresolved task and no matching event, it should still report
         # either no changes or still unresolved
         assert "No due date changes" in result.output or "still have unresolved" in result.output
+
+
+def test_cli_sync_updates_task_with_due_event_uid(runner, cli_env):
+    """sync correctly updates due date for task bound by UID — not just label."""
+    from timeopt.cli import cli
+    from timeopt.caldav_client import CalendarEvent
+    from unittest.mock import patch, MagicMock
+
+    conn = db.get_connection(cli_env)
+    display_id = core.dump_task(conn, core.TaskInput(
+        title="bound task", raw="bound task", priority="high", urgent=False,
+        category="work", effort="small"
+    ))
+    # Get the actual UUID from display_id
+    task_row = conn.execute("SELECT id FROM tasks WHERE display_id=?", (display_id,)).fetchone()
+    task_uuid = task_row[0]
+
+    conn.execute("UPDATE tasks SET due_event_uid='e-uid-1' WHERE id=?", (task_uuid,))
+    conn.commit()
+    conn.close()
+
+    event = CalendarEvent(
+        start="2026-04-20T10:00:00Z", end="2026-04-20T11:00:00Z",
+        title="The Meeting", uid="e-uid-1"
+    )
+    mock_caldav = MagicMock()
+    mock_caldav.get_events.return_value = [event]
+    with patch("timeopt.cli._get_caldav_client", return_value=mock_caldav):
+        result = runner.invoke(cli, ["sync"])
+    assert result.exit_code == 0, f"sync crashed: {result.output}\n{result.exception}"
+    # After sync, the task should be updated (due date set from the event)
+    conn2 = db.get_connection(cli_env)
+    row = conn2.execute("SELECT due_at FROM tasks WHERE id=?", (task_uuid,)).fetchone()
+    conn2.close()
+    assert row is not None
+    assert row[0] is not None  # due_at should now be set

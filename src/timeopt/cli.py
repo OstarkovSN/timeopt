@@ -436,13 +436,12 @@ def sync():
 
         try:
             events_raw = caldav.get_events(_date_type.today().isoformat(), days=90)
-            events = [{"start": e.start, "end": e.end, "title": e.title} for e in events_raw]
         except Exception as e:
             click.echo(f"CalDAV error: {e}", err=True)
             return
 
-        changes = core.sync_bound_tasks(conn, events)
-        resolved = core.try_resolve_unresolved(conn, events)
+        changes = core.sync_bound_tasks(conn, events_raw)
+        resolved = core.try_resolve_unresolved(conn, events_raw)
         still_unresolved = core.get_unresolved_tasks(conn)
 
         if changes:
