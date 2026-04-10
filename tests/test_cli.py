@@ -465,6 +465,43 @@ def test_ui_command_bad_port_shows_error(runner, cli_env):
     assert "not_a_number" in result.output
 
 
+def test_ui_command_port_in_use_shows_helpful_error(runner, cli_env):
+    """ui command shows helpful error when port is already in use."""
+    from timeopt.cli import cli
+    with patch("uvicorn.run", side_effect=OSError("Address already in use")):
+        result = runner.invoke(cli, ["ui"])
+    assert result.exit_code != 0
+    assert "port" in result.output.lower()
+    assert "could not start" in result.output.lower() or "error" in result.output.lower()
+
+
+def test_setup_wizard_db_error_shows_user_friendly_message(runner, cli_env):
+    """Setup wizard shows clear error if DB write fails mid-wizard."""
+    from timeopt.cli import cli
+    from unittest.mock import patch
+
+    # Patch core.set_config to raise RuntimeError on 3rd call (simulating disk full)
+    call_count = [0]
+    original = core.set_config
+
+    def fail_on_third(conn, key, value):
+        call_count[0] += 1
+        if call_count[0] >= 3:
+            raise RuntimeError("disk full")
+        return original(conn, key, value)
+
+    with patch("timeopt.cli.core.set_config", side_effect=fail_on_third):
+        # Choose Anthropic (1), enter key and model (2 calls), then yes CalDAV (3rd call will fail)
+        result = runner.invoke(
+            cli, ["setup"],
+            input="1\nsk-test\nclaude-3-5-haiku\ny\nhttps://caldav.example.com\nuser\npassword\nn\nn\n"
+        )
+
+    assert result.exit_code != 0
+    assert "error" in result.output.lower()
+    assert "disk full" in result.output.lower() or "saving configuration" in result.output.lower()
+
+
 def test_tasks_filter_by_priority(runner, cli_env):
     """tasks --priority filters by priority."""
     from timeopt.cli import cli
