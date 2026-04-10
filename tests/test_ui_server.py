@@ -68,3 +68,69 @@ def test_get_config_api_returns_all(ui_env):
     data = resp.json()
     assert "day_start" in data
     assert data["day_start"] == "09:00"
+
+
+def test_config_page_db_error_returns_500_with_log(ui_env, caplog):
+    """DB failure on config page should be logged."""
+    import sqlite3, logging
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    client = TestClient(app, raise_server_exceptions=False)
+    with patch("timeopt.core.get_all_config", side_effect=sqlite3.OperationalError("disk I/O error")):
+        with caplog.at_level(logging.ERROR, logger="timeopt.ui_server"):
+            resp = client.get("/config")
+    assert resp.status_code == 500
+    assert any(r.exc_info is not None for r in caplog.records)
+
+
+def test_post_config_db_error_returns_error_fragment(ui_env):
+    """Non-KeyError DB failure on POST /api/config should return HTMX error fragment, not raw 500."""
+    import sqlite3
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    client = TestClient(app, raise_server_exceptions=False)
+    with patch("timeopt.core.set_config", side_effect=sqlite3.OperationalError("database is locked")):
+        resp = client.post("/api/config/day_start", data={"value": "08:00"})
+    assert resp.status_code == 200
+    assert "error" in resp.text.lower()
+
+
+def test_get_config_api_db_error_returns_500_with_log(ui_env, caplog):
+    """DB failure on GET /api/config should be logged."""
+    import sqlite3, logging
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    client = TestClient(app, raise_server_exceptions=False)
+    with patch("timeopt.core.get_all_config", side_effect=sqlite3.OperationalError("no such table")):
+        with caplog.at_level(logging.ERROR, logger="timeopt.ui_server"):
+            resp = client.get("/api/config")
+    assert resp.status_code == 500
+    assert any(r.exc_info is not None for r in caplog.records)
+
+
+def test_post_config_optional_key_saves_successfully(ui_env):
+    """Optional config keys like llm_api_key and caldav_password must be saveable via POST."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    from timeopt import core, db
+    client = TestClient(app)
+    for key in ["llm_api_key", "caldav_password", "caldav_username", "llm_model"]:
+        resp = client.post(f"/api/config/{key}", data={"value": "test-value"})
+        assert resp.status_code == 200, f"POST to {key} returned {resp.status_code}"
+        assert "saved" in resp.text.lower(), f"POST to {key} did not show 'saved': {resp.text}"
+    conn = db.get_connection(ui_env)
+    assert core.get_config(conn, "llm_api_key") == "test-value"
+    conn.close()
+
+
+def test_password_fields_render_as_password_type(ui_env):
+    """caldav_password and llm_api_key fields must render as type='password'."""
+    from timeopt.ui_server import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    assert 'type="password"' in resp.text or "type='password'" in resp.text

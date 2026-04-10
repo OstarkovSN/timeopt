@@ -42,6 +42,9 @@ async def config_page(request: Request):
         return templates.TemplateResponse(
             request, "config.html", {"config": cfg}
         )
+    except Exception:
+        logger.exception("config_page: failed to render")
+        raise
     finally:
         conn.close()
 
@@ -54,6 +57,9 @@ async def config_partial(request: Request):
         return templates.TemplateResponse(
             request, "partials/config.html", {"config": cfg}
         )
+    except Exception:
+        logger.exception("config_partial: failed to render")
+        raise
     finally:
         conn.close()
 
@@ -73,6 +79,13 @@ async def set_config_field(request: Request, key: str, value: str = Form("")):
                 request, "partials/config_field.html",
                 {"key": key, "value": value, "status": "error", "error": str(e)},
             )
+        except Exception as e:
+            logger.exception("set_config_field: unexpected error for key=%s", key)
+            return templates.TemplateResponse(
+                request, "partials/config_field.html",
+                {"key": key, "value": value, "status": "error",
+                 "error": "Internal error — check server logs"},
+            )
     finally:
         conn.close()
 
@@ -82,5 +95,8 @@ async def get_all_config_api():
     conn = _open_conn()
     try:
         return JSONResponse(content=core.get_all_config(conn))
+    except Exception:
+        logger.exception("get_all_config_api: failed")
+        raise
     finally:
         conn.close()
